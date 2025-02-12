@@ -1,0 +1,12 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# do not commit the data/ folder
+data/
+
+# macOS hidden files
+.DS_Store
+
+
