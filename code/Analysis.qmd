@@ -20,7 +20,7 @@ library(ggplot2)
 library(binom)
 
 # set the path to the dataset
-path_to_data <- "/Users/karimmane/Documents/Karim/Personnel/Fatima_Moussa/Fatima/BSA_analysis/Data/base_fs_km.xlsx"
+path_to_data <- file.path(dirname(getwd()), "data", "base_fs_km.xlsx")
 ```
 
 # The experiment
