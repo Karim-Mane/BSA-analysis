@@ -5,10 +5,15 @@ format: docx
 ---
 
 ```{r setup, include=FALSE, message=FALSE}
-# install cleanepi from a specific branch
-if (!require("cleanepi")) {
-  remotes::install_github("epiverse-trace/cleanepi")
-}
+# install {pak}
+if (!require("pak")) install.packages("pak")
+
+# install {cleanepi}
+if (!require("cleanepi")) pak::pak("epiverse-trace/cleanepi")
+
+# install {rstatix}
+if (!require("rstatix")) pak::pak("rstatixi")
+
 
 # load the required libraries
 library(cleanepi)
@@ -17,10 +22,13 @@ library(dplyr)
 library(magrittr)
 library(kableExtra)
 library(ggplot2)
-library(binom)
+library(rstatix)
 
 # set the path to the dataset
 path_to_data <- file.path(dirname(getwd()), "data", "base_fs_km.xlsx")
+
+# load the functions in helpers.R
+source("code/helpers.R")
 ```
 
 # The experiment
@@ -135,7 +143,8 @@ data <- data %>%
 The **insemination** column determines whether a mosquito was inseminated or not. It contains some missing values where the corresponding mosquito was actually inseminated. As it's directly related to the eclosion, we will replace every missing entry by 'TRUE' where the **date_first_eclosion** is not missing
 
 ```{r}
-# identify fertilized females (with hatched eggs) where the insemination value is set to NA
+# identify fertilized females (with hatched eggs) where the insemination value
+# is set to NA
 incorrect <- is.na(data$insemination) & !is.na(data$date_first_eclosion)
 ```
 
@@ -151,7 +160,8 @@ if (any(incorrect)) {
 Some entries has a value in the **date_first_eclosion** column, but their insemination status is set FALSE. We will set it to TRUE to correct for such mistakes.
 
 ```{r}
-#identify fertilized females (with hatched eggs) where the insemination value is set to FALSE
+# identify fertilized females (with hatched eggs) where the insemination value
+# is set to FALSE
 incorrect <- data$insemination == FALSE & !is.na(data$date_first_eclosion)
 ```
 
@@ -194,16 +204,17 @@ data$insemination <- as.logical(as.factor(data$insemination))
 
 
 
-### Distribution of the proportion of inseminated females across the different experiences
+### Comparing the proportion of inseminated females across the different experiences
 
 ::: {.callout-note collapse="true"}
 ## Definition
 
-Inseminated here means that the females have received spermatozoids (mated).
+Inseminated female here refers to the females that have received spermatozoids (mated).
 :::
 
-```{r}
-# generate the table with the proportion of inseminated female in the groups defines above (by inhibitor, experience, and statut)
+```{r message=FALSE}
+# generate the table with the proportion of inseminated female in the groups
+# defined above (by inhibitor, experience, and statut)
 table_insemination <- data %>%
   dplyr::group_by(inhibitor, experience, statut) %>%
   dplyr::summarise(
@@ -232,9 +243,39 @@ plot_prop_inseminated
 ```
 
 
-### Test for the difference in proportions of inseminated females in the diffent groups ?
+### Test for the difference in the proportion of inseminated females between the diffent groups
 
 Please state clearly why you are doing this comparison
 
+```{r}
+prop_test_res <- fisher_exact_test_res <- NULL
+for (inhib in unique(table_insemination$inhibitor)) {
+  for (exp in unique(table_insemination$experience)) {
+    # store the inhibitor and experience information in a data frame
+    res <- data.frame(inhibitor = inhib, experience = exp)
+    
+    # subset the table to only have the data for the experience and inhibitor of
+    # interest
+    tmp_data <- table_insemination %>%
+      dplyr::filter(inhibitor == inhib & experience == exp)
+    
+    # perform the test
+    test_result <- compare_proportions(tmp_data)
+    
+    # combine the data
+    res <- cbind(res, test_result)
+    if (is.null(attr(test_result, "test"))) {
+      prop_test_res <- rbind(prop_test_res, res)
+    } else {
+      fisher_exact_test_res <- rbind(fisher_exact_test_res, res)
+    }
+  }
+}
+```
+
+* TODO:
+    * document the `compare_proportions()` function
+    * rename some columns in `prop_test_res` to reflect what the variables stand for
+    * find a way of combining `prop_test_res` and `fisher_exact_test_res`
 
 
