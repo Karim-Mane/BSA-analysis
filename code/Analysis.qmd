@@ -12,7 +12,7 @@ if (!require("pak")) install.packages("pak")
 if (!require("cleanepi")) pak::pak("epiverse-trace/cleanepi")
 
 # install {rstatix}
-if (!require("rstatix")) pak::pak("rstatixi")
+if (!require("rstatix")) pak::pak("rstatix")
 
 
 # load the required libraries
@@ -288,3 +288,4 @@ for (inhib in unique(table_insemination$inhibitor)) {
 
 
 
+Say Fatima does all her edits.....
