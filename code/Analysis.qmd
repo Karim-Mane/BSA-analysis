@@ -245,6 +245,8 @@ plot_prop_inseminated
 
 ### Test for the difference in the proportion of inseminated females between the diffent groups
 
+The documentation about two-proportions tests can be found [here](https://www.sthda.com/english/wiki/two-proportions-z-test-in-r)
+
 Please state clearly why you are doing this comparison
 
 ```{r}
@@ -260,7 +262,12 @@ for (inhib in unique(table_insemination$inhibitor)) {
       dplyr::filter(inhibitor == inhib & experience == exp)
     
     # perform the test
-    test_result <- compare_proportions(tmp_data)
+    test_result <- compare_proportions(
+      test_data = tmp_data,
+      group_col = "statut",
+      count_col = "nbre_femelles",
+      observed_col = "inseminees"
+    )
     
     # combine the data
     res <- cbind(res, test_result)
@@ -277,5 +284,7 @@ for (inhib in unique(table_insemination$inhibitor)) {
     * document the `compare_proportions()` function
     * rename some columns in `prop_test_res` to reflect what the variables stand for
     * find a way of combining `prop_test_res` and `fisher_exact_test_res`
+    
+
 
 
