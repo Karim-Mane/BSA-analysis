@@ -250,7 +250,7 @@ The documentation about two-proportions tests can be found [here](https://www.st
 Please state clearly why you are doing this comparison
 
 ```{r}
-prop_test_res <- fisher_exact_test_res <- NULL
+prop_test_res <- NULL
 for (inhib in unique(table_insemination$inhibitor)) {
   for (exp in unique(table_insemination$experience)) {
     # store the inhibitor and experience information in a data frame
@@ -269,23 +269,22 @@ for (inhib in unique(table_insemination$inhibitor)) {
       observed_col = "inseminees"
     )
     
-    # combine the data
-    res <- cbind(res, test_result)
+    # select the appropriated columns based the test that was performed
     if (is.null(attr(test_result, "test"))) {
-      prop_test_res <- rbind(prop_test_res, res)
+      test_result <- test_result[, c(1, 7, 9:13)]
     } else {
-      fisher_exact_test_res <- rbind(fisher_exact_test_res, res)
+      test_result <- test_result[, c(1, 3:8)]
     }
+    res <- cbind(res, test_result)
+    
+    # combine the data
+    prop_test_res <- rbind(prop_test_res, res)
   }
 }
 ```
 
 * TODO:
-    * document the `compare_proportions()` function
-    * rename some columns in `prop_test_res` to reflect what the variables stand for
-    * find a way of combining `prop_test_res` and `fisher_exact_test_res`
+    * Fatima to analyse the test result in the `prop_test_res` output.
     
 
 
-
-Say Fatima does all her edits.....
