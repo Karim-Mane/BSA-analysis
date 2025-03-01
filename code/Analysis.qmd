@@ -37,6 +37,8 @@ The experiment consists in testing whether any of the four chosen inhibitors has
 
 Every inhibitor was tested across three experiments or replicates denoted as `a`, `b`, and `c`, where one set of mosquitoes was exposed to the inhibitor, while the other was used as control.
 
+added this to test push
+
 ## Data cleaning
 
 ```{r}
