@@ -4,7 +4,11 @@ author: "Karim-Mane, Fatoumata Seck"
 format: docx
 ---
 
-```{r setup, include=FALSE, message=FALSE}
+```{r setup}
+#| message: false
+#| warning: false
+
+
 # install {pak}
 if (!require("pak")) install.packages("pak")
 
@@ -28,14 +32,17 @@ library(rstatix)
 path_to_data <- file.path(dirname(getwd()), "data", "base_fs_km.xlsx")
 
 # load the functions in helpers.R
-source("code/helpers.R")
+source(file.path(getwd(), "helpers.R"))
 ```
 
 # The experiment
 
-The experiment consists in testing whether any of the four chosen inhibitors has an impact on the _Anopheles gambiae s.l_ reproduction and its susceptibility to _Plasmodium_.
+The experiment consists in testing whether any of the four chosen inhibitors has
+an impact on the _Anopheles gambiae s.l_ reproduction and its susceptibility to _Plasmodium_.
 
-Every inhibitor was tested across three experiments or replicates denoted as `a`, `b`, and `c`, where one set of mosquitoes was exposed to the inhibitor, while the other was used as control.
+Every inhibitor was tested across three experiments or replicates denoted as
+`a`, `b`, and `c`, where one set of mosquitoes was exposed to the inhibitor,
+while the other was used as control.
 
 ## Data cleaning
 
@@ -45,7 +52,8 @@ data <- readxl::read_xlsx(path_to_data)
 
 There were `r nrow(data)` females used in the study.
 
-Missing values are written as `na`. We will substitute them with `NA` for compliance with R.
+Missing values are written as `na`. We will substitute them with `NA` for
+compliance with R.
 
 ```{r}
 data <- cleanepi::replace_missing_values(
@@ -55,8 +63,11 @@ data <- cleanepi::replace_missing_values(
 )
 ```
 
-After importing the data from MS excel, some `Date` columns have been transformed into `numeric`. They will be converted back to `Date` in ISO8604 format.
-{cleanepi} no longer performs automatic conversion from numeric to Date. We will use the below to perform the conversion.
+After importing the data from MS excel, some `Date` columns have been
+transformed into `numeric`. They will be converted back to `Date` in ISO8604
+format.
+{cleanepi} no longer performs automatic conversion from numeric to Date. We will
+use the below to perform the conversion.
 
 ```{r}
 target_columns <- c("date_ponte", "date_first_eclosion",
@@ -75,7 +86,8 @@ for (col in target_columns) {
 }
 ```
 
-Rename some column names to make them explicit: replace `experience1` by `inhibitor`, and `experience2` by `experience` as these two columns represent the inhibitors and experiments that were performed on the corresponding samples.
+Rename some column names to make them explicit: replace `experience1` by `inhibitor`, and `experience2` by `experience` as these two columns represent
+the inhibitors and experiments that were performed on the corresponding samples.
 
 ```{r}
 data <- data %>%
@@ -120,15 +132,19 @@ are_test <- data$statut != "ctrl"
 data$statut[are_test] <- "test"
 ```
 
-The following columns are not needed for the downstream analysis. We will drop them.
+The following columns are not needed for the downstream analysis. We will drop
+them.
 
 ```{r}
 data <- data %>%
   dplyr::select(-c(id, pot, statut2, dose))
 ```
 
-Moving the `insemination` column to the left to have it as part of the first columns of the dataset. This makes it accessible when viewing the data in the View panel.
-We also replace 'yes' and 'no' by 'TRUE' and 'FALE' to have the column in a logical form.
+Moving the `insemination` column to the left to have it as part of the first
+columns of the dataset. This makes it accessible when viewing the data in the
+View panel.
+We also replace 'yes' and 'no' by 'TRUE' and 'FALE' to have the column in a
+logical form.
 
 ```{r}
 data <- data %>%
@@ -140,7 +156,9 @@ data <- data %>%
   ))
 ```
 
-The **insemination** column determines whether a mosquito was inseminated or not. It contains some missing values where the corresponding mosquito was actually inseminated. As it's directly related to the eclosion, we will replace every missing entry by 'TRUE' where the **date_first_eclosion** is not missing
+The **insemination** column determines whether a mosquito was inseminated or
+not. It contains some missing values where the corresponding mosquito was
+actually inseminated. As it's directly related to the eclosion, we will replace every missing entry by 'TRUE' where the **date_first_eclosion** is not missing
 
 ```{r}
 # identify fertilized females (with hatched eggs) where the insemination value
@@ -148,7 +166,8 @@ The **insemination** column determines whether a mosquito was inseminated or not
 incorrect <- is.na(data$insemination) & !is.na(data$date_first_eclosion)
 ```
 
-we have `r sum(incorrect)` entry at line `r which(incorrect)` where insemination was set to `NA`, while the females have hatched eggs.
+we have `r sum(incorrect)` entry at line `r which(incorrect)` where insemination
+was set to `NA`, while the females have hatched eggs.
 
 ```{r}
 # Let's set them to TRUE
@@ -176,7 +195,9 @@ if (any(incorrect)) {
 
 ## Save the cleaned dataset
 
-After the cleaning steps above, the data is ready for use in analysis workflow. We are saving this version of the cleaned data that we can share with collaborators.
+After the cleaning steps above, the data is ready for use in analysis workflow.
+We are saving this version of the cleaned data that we can share with
+collaborators.
 
 ```{r}
 writexl::write_xlsx(
@@ -194,12 +215,6 @@ Please specific clearly why you are only interested in inseminated females for d
 ```{r}
 # convert the insemination column into logical
 data$insemination <- as.logical(as.factor(data$insemination))
-
-# only keep the inseminated females
-# data_for_analysis <- data %>%
-#   dplyr::filter(insemination) # same as dplyr::filter(insemination == TRUE)
-
-# We have `r nrow(data_for_analysis)` females which are all inseminated.
 ```
 
 
@@ -209,7 +224,7 @@ data$insemination <- as.logical(as.factor(data$insemination))
 ::: {.callout-note collapse="true"}
 ## Definition
 
-Inseminated female here refers to the females that have received spermatozoids (mated).
+Inseminated female here refers to the females that have received spermatozoa (mated).
 :::
 
 ```{r message=FALSE}
@@ -285,6 +300,36 @@ for (inhib in unique(table_insemination$inhibitor)) {
 
 * TODO:
     * Fatima to analyse the test result in the `prop_test_res` output.
-    
+
+## Inhibitors effect on mosquitoe reproduction rates and cycle length
+
+The section below focus on understanding the impact of the inhibitors on:
+
+*   the mosquitoes reproduction rates and
+*   the length of their reproduction cycle
+
+Given that only inseminated mosquitoes will have a reproduction cycle that can
+generate offspring, we filtered the data such that only blood fed mosquitoes
+will be considered in the downstream analyses.
+
+```{r}
+# only keep the inseminated females
+data_for_analysis <- data %>%
+  dplyr::filter(insemination)
+```
+
+There are `r nrow(data_for_analysis)` inseminated females. The distribution of
+the number of laid eggs per inhibitor is shown in the figure below.
+
+```{r}
+plot_ponte <- ggplot(
+  data_for_analysis, aes(x = experience, y = nbre_oeufs, fill = statut)) + 
+  geom_boxplot() +
+  facet_wrap( ~ inhibitor, ncol = 2) +
+  theme_bw()
+
+plot_ponte
+```
+
 
 
