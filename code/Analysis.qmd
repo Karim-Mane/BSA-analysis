@@ -18,6 +18,15 @@ if (!require("cleanepi")) pak::pak("epiverse-trace/cleanepi")
 # install {rstatix}
 if (!require("rstatix")) pak::pak("rstatix")
 
+# install {ggResidpanel}
+if (!require("ggResidpanel")) pak::pak("ggResidpanel")
+
+# install {ggpubr}
+if (!require("ggpubr")) pak::pak("ggpubr")
+
+# install {patchwork}
+if (!require("patchwork")) pak::pak("patchwork")
+
 
 # load the required libraries
 library(cleanepi)
@@ -27,6 +36,9 @@ library(magrittr)
 library(kableExtra)
 library(ggplot2)
 library(rstatix)
+library(ggResidpanel)
+library(ggpubr)
+library(patchwork)
 
 # set the path to the dataset
 path_to_data <- file.path(dirname(getwd()), "data", "base_fs_km.xlsx")
@@ -310,12 +322,13 @@ The section below focus on understanding the impact of the inhibitors on:
 
 Given that only inseminated mosquitoes will have a reproduction cycle that can
 generate offspring, we filtered the data such that only blood fed mosquitoes
-will be considered in the downstream analyses.
+will be considered in the downstream analyses. We also removed all entries in
+the dataset where the number of laid eggs is not greater than 0.
 
 ```{r}
 # only keep the inseminated females
 data_for_analysis <- data %>%
-  dplyr::filter(insemination)
+  dplyr::filter(insemination & nbre_oeufs > 0)
 ```
 
 There are `r nrow(data_for_analysis)` inseminated females. The distribution of
@@ -325,10 +338,110 @@ the number of laid eggs per inhibitor is shown in the figure below.
 plot_ponte <- ggplot(
   data_for_analysis, aes(x = experience, y = nbre_oeufs, fill = statut)) + 
   geom_boxplot() +
+  stat_summary(
+    fun.y = mean, geom = "point", shape = 20, size = 3, color = "white",
+    position = position_dodge2(width = 0.75, preserve = "single")
+  ) +
   facet_wrap( ~ inhibitor, ncol = 2) +
   theme_bw()
 
 plot_ponte
+```
+
+```{r}
+# select the data for inhibitor 1
+inhibitor1 <- data_for_analysis %>%
+  dplyr::filter(inhibitor == "inhib1")
+
+# test for the normality of the number of laid eggs
+lm_num_eggs <- lm(nbre_oeufs ~ 1, data = inhibitor1)
+
+# create the diagnostic plot, indicating a QQ-plot
+lm_num_eggs |>
+  ggResidpanel::resid_panel(plots = "qq")
+
+# Shapiro-Wilk test
+inhibitor1 |> 
+  rstatix::shapiro_test(nbre_oeufs)
+
+# test the difference in mean number of laid eggs between control and test mosquitoes in every experience
+stat_test <- inhibitor1 %>%
+  dplyr::group_by(experience) %>%
+  rstatix::t_test(nbre_oeufs ~ statut) #%>%
+  # rstatix::adjust_pvalue(method = "bonferroni") %>%
+  # rstatix::add_significance("p.adj")
+
+
+# Create a box plot
+bxp_inhib1 <- ggpubr::ggboxplot(
+  inhibitor1, x = "experience", y = "nbre_oeufs", 
+  color = "statut", palette = c("#00AFBB", "#E7B800"),
+  add = "mean"
+)
+
+# Add p-values onto the box plots
+stat_test <- stat_test %>%
+  add_xy_position(x = "experience", dodge = 0.8)
+bxp_inhib1 + ggpubr::stat_pvalue_manual(
+  stat_test,  label = "p", tip.length = 0
+)
+
+# Add 10% spaces between the p-value labels and the plot border
+bxp_inhib1 + ggpubr::stat_pvalue_manual(
+  stat_test,  label = "p", tip.length = 0
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+
+```{r}
+# select the data for inhibitor 4
+inhibitor4 <- data_for_analysis %>%
+  dplyr::filter(inhibitor == "inhib4")
+
+# test for the normality of the number of laid eggs
+lm_num_eggs <- lm(nbre_oeufs ~ 1, data = inhibitor4)
+
+# create the diagnostic plot, indicating a QQ-plot
+lm_num_eggs |>
+  ggResidpanel::resid_panel(plots = "qq")
+
+# Shapiro-Wilk test
+inhibitor4 |> 
+  rstatix::shapiro_test(nbre_oeufs)
+
+# test the difference in mean number of laid eggs between control and test mosquitoes in every experience
+stat_test <- inhibitor4 %>%
+  dplyr::group_by(experience) %>%
+  rstatix::wilcox_test(nbre_oeufs ~ statut) #%>%
+  # rstatix::adjust_pvalue(method = "bonferroni") %>%
+  # rstatix::add_significance("p.adj")
+
+
+# Create a box plot
+bxp_inhib4 <- ggpubr::ggboxplot(
+  inhibitor4, x = "experience", y = "nbre_oeufs", 
+  color = "statut", palette = c("#00AFBB", "#E7B800"),
+  add = "mean"
+)
+
+# Add p-values onto the box plots
+stat_test <- stat_test %>%
+  add_xy_position(x = "experience", dodge = 0.8)
+bxp_inhib4 + ggpubr::stat_pvalue_manual(
+  stat_test,  label = "p", tip.length = 0
+)
+
+# Add 10% spaces between the p-value labels and the plot border
+bxp_inhib4 + ggpubr::stat_pvalue_manual(
+  stat_test,  label = "p", tip.length = 0
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+```{r}
+# put the plots together
+bxp_inhib1 + bxp_inhib4
 ```
 
 
