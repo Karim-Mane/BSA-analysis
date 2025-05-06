@@ -334,8 +334,45 @@ data_for_analysis <- data %>%
 There are `r nrow(data_for_analysis)` inseminated females. The distribution of
 the number of laid eggs per inhibitor is shown in the figure below.
 
+The figure below show the distribution of the number of laid eggs across all
+experiments.
+
 ```{r}
-plot_ponte <- ggplot(
+hist(data_for_analysis$nbre_oeufs, 100)
+ggplot2::ggplot(
+  data_for_analysis, aes(nbre_oeufs, fill = statut)) + 
+  geom_histogram() +
+  # facet_wrap( ~ experience, ncol = 2) +
+  facet_grid(experience ~ inhibitor)
+  theme_bw()
+```
+
+The distribution looks quite normal. However the data are on different scales,
+with the values ranging between `r range(data_for_analysis$nbre_oeufs)[1]` and
+`r range(data_for_analysis$nbre_oeufs)[2]`. To remove the effect of different
+scales on the downstream analysis, we will normalise the data using the
+**z-score** method.
+
+```{r}
+# calculate z-score by inhibitor separately
+data_for_analysis$normalised_by_inhib <- ave(
+  data_for_analysis$nbre_oeufs,
+  data_for_analysis$inhibitor,
+  FUN = scale
+)
+
+# calculate log values
+data_for_analysis$log_normalised <- ave(
+  data_for_analysis$nbre_oeufs,
+  data_for_analysis$inhibitor,
+  FUN = function(x) log(x)
+)
+```
+
+
+
+```{r}
+plot_ponte <- ggplot2::ggplot(
   data_for_analysis, aes(x = experience, y = nbre_oeufs, fill = statut)) + 
   geom_boxplot() +
   stat_summary(
