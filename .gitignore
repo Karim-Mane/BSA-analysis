@@ -9,4 +9,7 @@ data/
 # macOS hidden files
 .DS_Store
 
+# do not commit the word document generated after rendering the file
+code/Analysis.docx
+
 
