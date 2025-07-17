@@ -313,12 +313,16 @@ for (inhib in unique(table_insemination$inhibitor)) {
 * TODO:
     * Fatima to analyse the test result in the `prop_test_res` output.
 
-## Inhibitors effect on mosquitoe reproduction rates and cycle length
+## Inhibitors effect on mosquitoe fecundity and cycle length
 
 The section below focus on understanding the impact of the inhibitors on:
 
-*   the mosquitoes reproduction rates and
+*   the mosquitoes fecundity (number of laid eggs) and
 *   the length of their reproduction cycle
+
+The fecundity is represented by the variable `nbre_oeufs`.
+The length of mosquitoes reproduction cycle is represented by the
+`duree_g_ponte` variable.
 
 Given that only inseminated mosquitoes will have a reproduction cycle that can
 generate offspring, we filtered the data such that only blood fed mosquitoes
@@ -334,8 +338,19 @@ data_for_analysis <- data %>%
 There are `r nrow(data_for_analysis)` inseminated females. The distribution of
 the number of laid eggs per inhibitor is shown in the figure below.
 
-The figure below show the distribution of the number of laid eggs across all
-experiments.
+The figure below show the distribution of the number of laid eggs over the delay
+of egg laying for each inhibitor.
+
+```{r}
+# transform the data of interest in long format
+data_for_analysis$duree_g_ponte <- as.numeric(data_for_analysis$duree_g_ponte)
+
+ggplot(data_for_analysis,
+       aes(x = duree_g_ponte, y = nbre_oeufs, color = statut)) +
+  geom_point() +
+  facet_grid(experience ~ inhibitor) +
+  theme_bw()
+```
 
 ```{r}
 hist(data_for_analysis$nbre_oeufs, 100)
@@ -376,7 +391,7 @@ plot_ponte <- ggplot2::ggplot(
   data_for_analysis, aes(x = experience, y = nbre_oeufs, fill = statut)) + 
   geom_boxplot() +
   stat_summary(
-    fun.y = mean, geom = "point", shape = 20, size = 3, color = "white",
+    fun = mean, geom = "point", shape = 20, size = 3, color = "white",
     position = position_dodge2(width = 0.75, preserve = "single")
   ) +
   facet_wrap( ~ inhibitor, ncol = 2) +
@@ -481,5 +496,22 @@ bxp_inhib4 + ggpubr::stat_pvalue_manual(
 bxp_inhib1 + bxp_inhib4
 ```
 
+
+## Inhibitors effect on mosquitoe fertility and eclosion delay
+
+variable with the number of larves: `nbre_larves`
+variable with the eclosion delay: `duree_p_eclosion`
+variable with the fertility rate: `taux_eclosion`
+
+```{r}
+data_for_analysis$taux_eclosion <- as.numeric(data_for_analysis$taux_eclosion)
+data_for_analysis$taux_eclosion <- round(data_for_analysis$taux_eclosion,
+                                         digits = 2)
+ggplot(data_for_analysis,
+       aes(x = duree_p_eclosion, y = taux_eclosion, color = statut)) +
+  geom_point() +
+  facet_grid(experience ~ inhibitor) +
+  theme_bw()
+```
 
 
