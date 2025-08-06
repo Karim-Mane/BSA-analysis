@@ -507,11 +507,58 @@ variable with the fertility rate: `taux_eclosion`
 data_for_analysis$taux_eclosion <- as.numeric(data_for_analysis$taux_eclosion)
 data_for_analysis$taux_eclosion <- round(data_for_analysis$taux_eclosion,
                                          digits = 2)
-ggplot(data_for_analysis,
-       aes(x = duree_p_eclosion, y = taux_eclosion, color = statut)) +
+
+# filter out rows where the duration of eclosion is NA due to missing values in
+# either the 'date_ponte' or 'date_eclosion' column
+data_for_analysis |>
+  # dplyr::filter(!is.na(duree_p_eclosion)) |>
+  ggplot(aes(x = duree_p_eclosion, y = taux_eclosion, color = statut)) +
+  # geom_violin(trim = FALSE) +  # Use trim = TRUE to cut off the tails
+  # geom_boxplot(width = 0.1, position = position_dodge(0.9)) #, color = "black"
+  geom_jitter(width = 0.2, height = 0.2, size = 1) +
   geom_point() +
   facet_grid(experience ~ inhibitor) +
   theme_bw()
+```
+
+
+## Inhibitors effect on mosquitoe nymphose rate
+
+variable with the nymphose delay: `duree_p_nymphose`
+variable with the nymphose rate: `taux_nymphose`
+
+```{r}
+data_for_analysis$taux_nymphose <- as.numeric(data_for_analysis$taux_nymphose)
+data_for_analysis$taux_nymphose <- round(data_for_analysis$taux_nymphose,
+                                         digits = 2)
+data_for_analysis$duree_p_nymphose <- as.numeric(data_for_analysis$duree_p_nymphose)
+
+test <- data_for_analysis |>
+  dplyr::group_by(experience, inhibitor, statut) |>
+  dplyr::count(duree_p_nymphose)
+
+# time distribution only
+data_for_analysis |>
+  # dplyr::filter(!is.na(duree_p_eclosion)) |>
+  ggplot(aes(x = duree_p_nymphose, color = statut)) +
+  # geom_violin(trim = FALSE) +  # Use trim = TRUE to cut off the tails
+  # geom_boxplot(width = 0.1, position = position_dodge(0.9)) #, color = "black"
+  # geom_jitter(width = 0.2, height = 0.2, size = 1) +
+  # geom_point() +
+  geom_histogram(alpha=0.5, position="identity") +
+  facet_grid(experience ~ inhibitor) +
+  theme_bw() +
+  scale_x_continuous(breaks = sort(unique(data_for_analysis$duree_p_nymphose))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+# distribution of rate over time
+data_for_analysis |>
+  ggplot(aes(x = duree_p_nymphose, y = taux_nymphose, color = statut)) +
+  geom_jitter(width = 0.2, height = 0.2, size = 1) +
+  facet_grid(experience ~ inhibitor) +
+  theme_bw()
+
+
 ```
 
 
