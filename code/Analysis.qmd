@@ -631,15 +631,6 @@ ggplot(resume_cycle, aes(x = stade, y = moyenne, color = statut, group = statut)
   theme_minimal() +
   facet_grid(experience ~ inhibitor) +
   theme(axis.text = element_text(angle = 45))
-
-# distribution of rate over time
-resume_cycle |>
-  ggplot(aes(x = duree_p_emergence, y = taux_emergence, color = statut)) +
-  geom_point() +
-  # geom_jitter(width = 0.2, height = 0.2, size = 1) +
-  facet_grid(experience ~ inhibitor) +
-  theme_bw() +
-  scale_y_continuous(breaks = seq(0, 100, 10))
 ```
 
 ```{r}
@@ -648,11 +639,69 @@ ggplot(resume_cycle, aes(x = stade, y = moyenne, group = statut)) +
   # geom_point(size = 1.8, alpha = 0.8) +
   geom_smooth(aes(color = statut, fill = statut),
               method = "lm", se = TRUE, linewidth = 0.9, alpha = 0.20) +  # per-sample lm
-  labs(x = "Time", y = "Value", color = "Sample",
+  labs(x = "Cycle", y = "nombre moyen", color = "Statut",
        title = "Per-sample trends with linear fits") +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
+resume_cycle
+```
+##Fatoumata_Curiosity !!!!
+## Variation of mean durations
+```{r}
+# conform the data of interest are into long format
+data_for_analysis$duree_g_ponte <- as.numeric(data_for_analysis$duree_g_ponte)
+data_for_analysis$duree_p_eclosion <- as.numeric(data_for_analysis$duree_p_eclosion)
+data_for_analysis$duree_p_nymphose <- as.numeric(data_for_analysis$duree_p_nymphose)
+data_for_analysis$duree_p_emergence <- as.numeric(data_for_analysis$duree_p_emergence)
+```
+```{r}
+delay_ponte <- data_for_analysis |>
+  dplyr::group_by(experience, inhibitor, statut) |>
+  summarise(
+    moyenne = mean(duree_g_ponte, na.rm = TRUE),
+    phase = "ponte"
+  )
 
+delay_eclosion <- data_for_analysis |>
+  dplyr::group_by(experience, inhibitor, statut) |>
+  summarise(
+    moyenne = mean((duree_g_ponte+duree_p_eclosion), na.rm = TRUE),
+    phase = "eclosion"
+  )
+
+delay_nymphose <- data_for_analysis |>
+  dplyr::group_by(experience, inhibitor, statut) |>
+  summarise(
+    moyenne = mean((duree_g_ponte+duree_p_nymphose), na.rm = TRUE),
+    phase = "nymphose"
+  )
+
+delay_emergence <- data_for_analysis |>
+  dplyr::group_by(experience, inhibitor, statut) |>
+  summarise(
+    moyenne = mean((duree_g_ponte+duree_p_emergence), na.rm = TRUE),
+    phase = "emergence"
+  )
+
+resume_cycle_durations <- rbind(
+  delay_ponte, delay_eclosion, delay_nymphose, delay_emergence
+)
+```
+
+```{r}
+resume_cycle_durations$phase <- factor(
+  resume_cycle_durations$phase,
+  levels = c("ponte", "eclosion", "nymphose", "emergence")
+)
+ggplot(resume_cycle_durations, aes(x = phase, y = moyenne, color = statut, group = statut)) +
+  geom_line() +
+  geom_point(size = 2) +
+  # geom_text(aes(label = moyenne), vjust = -0.6) +
+  labs(x = "cycle", y = "duree moyen") +
+  theme_minimal() +
+  facet_grid(experience ~ inhibitor) +
+  theme(axis.text = element_text(angle = 45)) +
+  scale_y_continuous(breaks = seq(0, 20, 2))
 ```
 
 
