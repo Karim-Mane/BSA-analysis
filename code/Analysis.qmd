@@ -3543,3 +3543,84 @@ Summary_pval_global_durations_cycle <- rbind(
   pval_global_duree_p_emergence
 )
 ```
+
+### MODEL DE REGRESSION #FS & KM 
+#1.Charger les packages
+```{r}
+library(tidyverse)
+library(lme4)
+library(lmerTest)   # donne les p-values
+library(emmeans)
+library(ggplot2)
+```
+
+#2. Vérifier la structure de ton tableau
+```{r}
+data <- data %>%
+  mutate(
+    experience = as.factor(experience),
+    inhibiteur = as.factor(inhibiteur),
+    groupe     = as.factor(groupe)
+  )
+```
+
+#3. MODÈLE MIXTE
+```{r}
+model <- lmer(valeur ~ inhibiteur * groupe + (1|experience), data = data)
+summary(model)
+```
+
+#4. Comparaison entre inhibiteurs : EMMeans
+```{r}
+effets <- emmeans(model, ~ groupe | inhibiteur)
+effets
+pairs(effets)   # test vs control pour chaque inhibiteur
+```
+
+```{r}
+emmeans(model, pairwise ~ inhibiteur | groupe)
+```
+```{r}
+emmeans(model, pairwise ~ inhibiteur * groupe)
+```
+
+#5. EXTRACTION DIRECTE DE L’EFFET DE CHAQUE INHIBITEUR
+
+```{r}
+eff_traitement <- contrast(effets, method = "revpairwise") 
+eff_traitement
+```
+#6. Graphique clair des effets
+
+#Boxplot simple :
+```{r}
+ggplot(data, aes(x = inhibiteur, y = valeur, fill = groupe)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Effet des inhibiteurs sur le paramètre",
+       y = "Valeur du paramètre",
+       x = "Inhibiteur")
+```
+
+#Graphique des moyennes ajustées (avec EMMeans)
+```{r}
+df_emm <- as.data.frame(effets)
+
+ggplot(df_emm, aes(x = inhibiteur, y = emmean, color = groupe)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = .1) +
+  theme_minimal() +
+  labs(title = "Effets ajustés (EMMeans)",
+       y = "Moyenne ajustée",
+       x = "Inhibiteur")
+```
+
+#7. Diagnostic du modèle
+```{r}
+par(mfrow=c(1,2))
+plot(model)           # résidus vs ajustements
+qqnorm(residuals(model)); qqline(residuals(model))
+```
+
+
+
