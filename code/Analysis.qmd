@@ -50,7 +50,7 @@ source(file.path(getwd(), "helpers.R"))
 # The experiment
 
 The experiment consists in testing whether any of the four chosen inhibitors has
-an impact on the _Anopheles gambiae s.l_ reproduction and its susceptibility to _Plasmodium_.
+an impact on the _Anopheles reproduction pattern_.
 
 Every inhibitor was tested across three experiments or replicates denoted as
 `a`, `b`, and `c`, where one set of mosquitoes was exposed to the inhibitor,
@@ -220,16 +220,23 @@ writexl::write_xlsx(
 
 ## Data analysis
 
-### Remove all non-inseminated females from the target data
+### after investigating the proportion of inseminated females, Remove  non-inseminated females from the target data.
 
 Please specific clearly why you are only interested in inseminated females for downstream analysis.
+
+#Answer (FATOUMATA !!!)
+The default conditions for to study reproduction in the lab are :
+Male + female Mating, Female's Blood feeding (blood == source of protein )
+!!! a proxy a successful mating is the insemination of the female.
+During mating male transfer to femelle spermatozoides and other males hormorn. That's what we call  Insemination. 
+1. Note that All females selected for this studies are priorly fully blood fled (Condition 2 check !!!)
+2. I did reproductive organe dissections after each experiment to check if the females are inseminated. So to ensure Condition 1, we need to select the inseminated females.
+
 
 ```{r}
 # convert the insemination column into logical
 data$insemination <- as.logical(as.factor(data$insemination))
 ```
-
-
 
 ### Comparing the proportion of inseminated females across the different experiences
 
@@ -239,42 +246,90 @@ data$insemination <- as.logical(as.factor(data$insemination))
 Inseminated female here refers to the females that have received spermatozoa (mated).
 :::
 
+# ! Fatoumata : we should remove data with insemination == na before processing the prop of femelles inseminated because if we select all femelles nbre_femelles = dplyr::n(), and considere inseminees ad insemination == true, so by defautl the na will be consider as insemination == false !!!
+
+
 ```{r message=FALSE}
 # generate the table with the proportion of inseminated female in the groups
-# defined above (by inhibitor, experience, and statut)
+# defined above (by inhibitor, experience, and statut) Here we remove Insemination == na, as not determined
+
+data <- data %>%
+  filter(!is.na(insemination)) # to exclude data where Insemination has not been set
+
+
 table_insemination <- data %>%
   dplyr::group_by(inhibitor, experience, statut) %>%
   dplyr::summarise(
     nbre_femelles = dplyr::n(),
     inseminees = sum(insemination, na.rm = TRUE) # same sum(insemination == TRUE, na.rm = TRUE)
   ) %>% 
-  dplyr::mutate(prop_inseminees = (inseminees / nbre_femelles) * 100)
+  dplyr::mutate(
+    prop_inseminees = (inseminees / nbre_femelles) * 100,
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+        ic_low = purrr::map2_dbl(inseminees, nbre_femelles, ~ prop.test(.x, .y)$conf.int[1] * 100),
+        ic_high = purrr::map2_dbl(inseminees, nbre_femelles, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    )
 
 # convert to factor and re-level to maintain the order we need
 table_insemination$inhibitor <- factor(
   table_insemination$inhibitor,
   levels = c("inhib1", "inhib3", "inhib4", "inhib10")
 )
+
 ```
 
 Below we are graphically visualising the table with the proportion of inseminated females per group of inhibitor, experience, and statut.
 
 ```{r}
 plot_prop_inseminated <- ggplot(
-  table_insemination, aes(x = experience, y = prop_inseminees, fill = statut)) + 
+  table_insemination,
+  aes(
+    x = experience,
+    y = prop_inseminees,
+    fill = statut
+    )
+) +
   geom_bar(position = 'dodge', stat = 'identity') +
-  facet_wrap( ~ inhibitor, ncol = 2) +
-  theme_bw()
-
+  # Apply renaming and reordering only inside the plot for inhibitors
+  facet_wrap(
+    ~ factor(
+      inhibitor,
+      levels = c("inhib1", "inhib3", "inhib4", "inhib10"),
+      labels = c("Inhibiteur 1", "Inhibiteur 3", "Inhibiteur 4", "Inhibiteur 10")
+    ),
+    ncol = 2
+  ) +
+  # Rename the x-axis tick labels
+  scale_x_discrete(
+    labels = c(
+      "exp1" = "Expérience 1",
+      "exp2" = "Expérience 2",
+      "exp3" = "Expérience 3"
+    )
+  ) +
+  # Color palette and legend customization
+  scale_fill_manual(
+    name = "Statut",
+    values = c("#0072B2", "#E69F00"),
+    labels = c("Contrôle", "Inhibiteur")
+  ) +
+  labs(
+    x = "Expériences",
+    y = "Taux d'insémination (%)"
+  ) +
+  theme_bw() +  # keep default ggplot grid and border
+  theme(
+    text = element_text(size = 14),
+    legend.position = "top",                     # Legend on top
+    strip.background = element_rect(fill = "gray80"),  # Gray facet header
+    strip.text = element_text(face = "plain")    # Normal facet titles
+  ) +
+  scale_y_continuous(breaks = seq(0, 100, 15))
+# Print the plot
 plot_prop_inseminated
 ```
 
-
-### Test for the difference in the proportion of inseminated females between the diffent groups
-
-The documentation about two-proportions tests can be found [here](https://www.sthda.com/english/wiki/two-proportions-z-test-in-r)
-
-Please state clearly why you are doing this comparison
+# Test for the difference in the proportion of inseminated females between the diffent groups
 
 ```{r}
 prop_test_res <- NULL
@@ -308,12 +363,770 @@ for (inhib in unique(table_insemination$inhibitor)) {
     prop_test_res <- rbind(prop_test_res, res)
   }
 }
+
+```
+•	TODO: o	Fatima to analyse the test result in the prop_test_res output.
+
+
+# Fatoumata : Plot make up, statistical test and labels of Pvalue significance
+
+# choix de test automatique entre Prop_Test, chi2 et fisher
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# 🔹 Mapping numérique pour positionner les barres de p-value
+x_mapping <- data.frame(
+    experience = c("exp1", "exp2", "exp3"),
+    x_num = 1:3
+)
+
+# 🔹 Fonction pour choisir automatiquement le test et calculer p-value
+# check the pval_data loading afterwards to know the test used for each p
+get_pvalue_label_prop_auto <- function(df){
+  
+  inseminees_ctrl <- sum(df$inseminees[df$statut == "ctrl"])
+  total_ctrl     <- sum(df$nbre_femelles[df$statut == "ctrl"])
+  inseminees_test <- sum(df$inseminees[df$statut == "test"])
+  total_test     <- sum(df$nbre_femelles[df$statut == "test"])
+  
+  tab <- matrix(c(
+    inseminees_ctrl,
+    total_ctrl - inseminees_ctrl,
+    inseminees_test,
+    total_test - inseminees_test
+  ), nrow = 2, byrow = TRUE)
+  
+  colnames(tab) <- c("inséminées", "non_inséminées")
+  rownames(tab) <- c("Contrôle", "Inhibiteur")
+  
+  if(min(tab) < 5){
+    p <- fisher.test(tab)$p.value
+    test_used <- "Fisher"
+  } else if(total_ctrl >= 20 & total_test >= 20){
+    p <- prop.test(x = c(inseminees_ctrl, inseminees_test),
+                   n = c(total_ctrl, total_test))$p.value
+    test_used <- "Prop test"
+  } else {
+    p <- chisq.test(tab, correct = FALSE)$p.value
+    test_used <- "Chi²"
+    # En pratique, pour des effectifs ≥ 20, la condition “prop.test” couvre déjà ce que le Chi² ferait, donc on n’utilise plus le Chi² classique dans ce cas précis.
+  }
+  
+  if(p >= 0.05){
+    label <- "ns"
+  } else if(p < 0.001){
+    label <- "***"
+  } else if(p < 0.01){
+    label <- "**"
+  } else {
+    label <- "*"
+  }
+  
+  return(c(p = p, label = label, test_used = test_used))
+}
+
+# 🔹 Calcul des IC95% (Clopper-Pearson)
+ci_data <- table_insemination %>%
+    group_by(inhibitor, experience, statut) %>%
+    summarise(
+        prop = sum(inseminees) / sum(nbre_femelles),
+        n = sum(nbre_femelles),
+        inseminees = sum(inseminees),
+        ci_low = binom.test(sum(inseminees), sum(nbre_femelles))$conf.int[1] * 100,
+        ci_high = binom.test(sum(inseminees), sum(nbre_femelles))$conf.int[2] * 100,
+        prop_inseminees = prop * 100,
+        .groups = "drop"
+    )
+
+# 🔹 Calcul des p-values et labels automatiquement
+pval_data_prop_insemination <- table_insemination %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        tmp = list(get_pvalue_label_prop_auto(cur_data())),
+        ci_max = max(
+            binom.test(sum(inseminees[statut=="ctrl"]), sum(nbre_femelles[statut=="ctrl"]))$conf.int[2]*100,
+            binom.test(sum(inseminees[statut=="test"]), sum(nbre_femelles[statut=="test"]))$conf.int[2]*100
+        ),
+        .groups = "drop"
+    ) %>%
+    tidyr::unnest_wider(tmp) %>%
+    left_join(x_mapping, by = "experience") %>%
+    mutate(
+        y.position = ci_max * 1.05,   # barre horizontale au-dessus IC95%
+        label_y    = ci_max * 1.12    # label p-value encore plus haut
+    )
+
+### 🔹 Affichage du tableau des p-values avec le test utilisé !!! 
+pval_data_prop_insemination %>%
+    select(inhibitor, experience, p, label, test_used) %>%
+    print(n = Inf)
+
+# 🔹 Création du plot
+plot_prop_inseminated <- ggplot(
+    ci_data,
+    aes(x = experience, y = prop_inseminees, fill = statut)
+) +
+    geom_bar(
+        position = position_dodge(width = 0.7), 
+        stat = "identity",
+        color = "black",
+        width = 0.6
+    ) +
+    geom_errorbar(
+        aes(ymin = prop_inseminees, ymax = ci_high),
+        position = position_dodge(0.7),
+        width = 0.2, 
+        linewidth = 0.5,
+        color = "black"
+    ) +
+    facet_wrap(
+        ~ factor(
+            inhibitor,
+            levels = c("inhib1", "inhib10", "inhib3", "inhib4"), #inhib10 will be inhib 2
+            labels = c("Inhibiteur 1", "Inhibiteur 2", "Inhibiteur 3", "Inhibiteur 4") 
+        ),
+        ncol = 2
+    ) +
+    scale_x_discrete(
+        labels = c(
+            "exp1" = "Expérience 1",
+            "exp2" = "Expérience 2",
+            "exp3" = "Expérience 3"
+        )
+    ) +
+    scale_fill_manual(
+        name = "Statut",
+        values = c("ctrl" = "#0072B2", "test" = "#E69F00"),
+        labels = c("Contrôle", "Inhibiteur")
+    ) +
+    labs(
+        x = "Expériences",
+        y = "Taux d'insémination (%)"
+    ) +
+    theme_bw() +
+    theme(
+        text = element_text(size = 14),
+        legend.position = "top",
+        strip.background = element_rect(fill = "gray80"),
+        axis.title.x = element_text(margin = margin(t = 5)), #margin (t) is to add space on top of the title, betwen the x title and the x axis,
+        axis.title.y = element_text(margin = margin(r = 5)), #margin (r) is to add space at the right of the title, betwen the y title and the y axis,
+        strip.text = element_text(face = "plain")
+    ) +
+    scale_y_continuous(breaks = seq(0, 100, 20)) +
+  # Barres horizontales p-values bien décalées
+    geom_segment(
+        data = pval_data_prop_insemination,
+        aes(x = x_num - 0.25, xend = x_num + 0.25, y = y.position, yend = y.position),
+        inherit.aes = FALSE
+    ) +
+    geom_text(
+        data = pval_data_prop_insemination,
+        aes(x = x_num, y = label_y, label = label),
+        inherit.aes = FALSE,
+        size = 4
+    )
+
+# 🔹 Affichage
+plot_prop_inseminated
+
+```
+```{r}
+#Save with more height (inches) 
+#ggsave("plot_prop_Insemination.png", plot = plot_prop_inseminated, width = 8, height = 7, dpi = 300)
 ```
 
-* TODO:
-    * Fatima to analyse the test result in the `prop_test_res` output.
+#Lets flip the plot into horizontal bars to see (FS)
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
 
-## Inhibitors effect on mosquitoe fecundity and cycle length
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    inseminees_ctrl <- sum(df$inseminees[df$statut == "ctrl"])
+    total_ctrl     <- sum(df$nbre_femelles[df$statut == "ctrl"])
+    inseminees_test <- sum(df$inseminees[df$statut == "test"])
+    total_test     <- sum(df$nbre_femelles[df$statut == "test"])
+    
+    tab <- matrix(c(
+        inseminees_ctrl,
+        total_ctrl - inseminees_ctrl,
+        inseminees_test,
+        total_test - inseminees_test
+    ), nrow = 2, byrow = TRUE)
+    
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(inseminees_ctrl, inseminees_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    return(c(p = p, label = label, test_used = test_used))
+}
+
+# 🔹 Calcul IC95%
+ci_data <- table_insemination %>%
+    group_by(inhibitor, experience, statut) %>%
+    summarise(
+        prop = sum(inseminees) / sum(nbre_femelles),
+        n = sum(nbre_femelles),
+        ci_low = binom.test(sum(inseminees), sum(nbre_femelles))$conf.int[1] * 100,
+        ci_high = binom.test(sum(inseminees), sum(nbre_femelles))$conf.int[2] * 100,
+        prop_inseminees = prop * 100,
+        .groups = "drop"
+    )
+
+# 🔹 Calcul p-values
+pval_data_prop_insemination <- table_insemination %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        tmp = list(get_pvalue_label_prop_auto(cur_data())),
+        ci_max = max(
+            binom.test(sum(inseminees[statut=="ctrl"]), sum(nbre_femelles[statut=="ctrl"]))$conf.int[2]*100,
+            binom.test(sum(inseminees[statut=="test"]), sum(nbre_femelles[statut=="test"]))$conf.int[2]*100
+        ),
+        .groups = "drop"
+    ) %>%
+    tidyr::unnest_wider(tmp) %>%
+    mutate(
+        y_num = as.numeric(factor(experience, levels = c("exp1", "exp2", "exp3"))),
+        x.position = ci_max * 1.05,   # position du segment
+        label_x    = ci_max * 1.12    # position du label
+    )
+
+# 🔹 Graphique avec barres horizontales
+#plot_prop_inseminated <- ggplot(
+    #ci_data,
+    #aes(x = experience, y = prop_inseminees, fill = statut)
+plot_prop_inseminated2 <- ggplot(ci_data, aes(
+    y = experience, x = prop_inseminees, fill = statut # axis flipped !!!
+)) +
+    geom_col( # !!!
+        position = position_dodge(width = 0.7),
+        color = "black", width = 0.6
+    ) +
+    geom_errorbarh(  # note le "h" pour horizontal
+        aes(xmin = ci_low, xmax = ci_high),
+        position = position_dodge(0.7),
+        width = 0.2,
+        linewidth = 0.5,
+        color = "black"
+    ) +
+    facet_wrap(
+        ~ factor(
+            inhibitor, 
+            levels = c("inhib1", "inhib10", "inhib3", "inhib4"),
+            labels = c("Inhibiteur 1", "Inhibiteur 2", "Inhibiteur 3", "Inhibiteur 4") #Rename inhib #10 as inhib 2
+        ),
+        ncol = 2
+    ) +
+    scale_y_discrete(
+        labels = c(
+            "exp1" = "Expérience 1",
+            "exp2" = "Expérience 2",
+            "exp3" = "Expérience 3"
+        )
+    ) +
+    scale_fill_manual(
+        name = "Statut",
+        values = c("ctrl" = "#0072B2", "test" = "#E69F00"),
+        labels = c("Contrôle", "Inhibiteur")
+    ) +
+    labs(
+        x = "Taux d'insémination (%)",
+        #y = "Expériences" to remove the title in this case as it a repeat
+        y = NULL 
+    ) +
+    theme_bw() +
+    theme(
+        text = element_text(size = 14),
+        legend.position = "top",
+        strip.background = element_rect(fill = "gray80"),
+    axis.text.x = element_text(size = 13, color = "black"),
+    axis.text.y = element_text(size = 13, color = "black"),   
+        axis.title.x = element_text(margin = margin(t = 5)), #margin (t) is to add space on top of the title, betwen the x title and the x axis,
+        #axis.title.y = element_text(margin = margin(r = 5)), #margin (r) is to add space at the right of the title, betwen the y title and the y axis,
+        strip.text = element_text(face = "plain")
+    ) +
+    scale_x_continuous(breaks = seq(0, 100, 20)) +
+    geom_segment(
+        data = pval_data_prop_insemination,
+        aes(y = y_num - 0.25, yend = y_num + 0.25, x = x.position, xend = x.position),
+        inherit.aes = FALSE
+    ) +
+    geom_text(
+        data = pval_data_prop_insemination,
+        aes(y = y_num, x = label_x, label = label),
+        inherit.aes = FALSE,
+        size = 4
+    )
+
+# 🔹 Affichage
+plot_prop_inseminated2
+```
+```{r}
+#Save with more height (inches) 
+#ggsave("plot_prop_Insemination_ok.png", plot = plot_prop_inseminated2, width = 8, height = 7, dpi = 300)
+```
+
+#  Test statistiques sur la proportion de femelles inseminées !!!
+
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    inseminees_ctrl <- sum(df$inseminees[df$statut == "ctrl"])
+    total_ctrl  <- sum(df$nbre_femelles[df$statut == "ctrl"])
+    inseminees_test <- sum(df$inseminees[df$statut == "test"])
+    total_test  <- sum(df$nbre_femelles[df$statut == "test"])
+    
+    prop_ctrl <- (inseminees_ctrl / total_ctrl) * 100
+    prop_test <- (inseminees_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(inseminees_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(inseminees_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(inseminees_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(inseminees_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        inseminees_ctrl,
+        total_ctrl - inseminees_ctrl,
+        inseminees_test,
+        total_test - inseminees_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(inseminees_ctrl, inseminees_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Test", "Test > Ctrl"))
+    
+    tibble(
+        Prop = "Inseminees",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_Taux_Insemination <- table_insemination %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+```
+
+
+#  Global (By Inhib  Ctrl Vs Test) Test statistiques sur la proportion de femelles inseminées !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    inseminees_ctrl <- sum(df$inseminees[df$statut == "ctrl"])
+    total_ctrl  <- sum(df$nbre_femelles[df$statut == "ctrl"])
+    inseminees_test <- sum(df$inseminees[df$statut == "test"])
+    total_test  <- sum(df$nbre_femelles[df$statut == "test"])
+    
+    prop_ctrl <- (inseminees_ctrl / total_ctrl) * 100
+    prop_test <- (inseminees_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(inseminees_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(inseminees_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(inseminees_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(inseminees_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        inseminees_ctrl,
+        total_ctrl - inseminees_ctrl,
+        inseminees_test,
+        total_test - inseminees_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(inseminees_ctrl, inseminees_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Test", "Test > Ctrl"))
+    
+    tibble(
+        Prop = "Inseminees",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_global_Taux_Insemination <- table_insemination %>%
+    #group_by(inhibitor, experience) %>%
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+```
+
+
+-----------------
+#Proportion de femelles ayant pondu des oeufs # Here we select insemination == TRUE as explained below
+
+```{r message=FALSE}
+# generate the table with the proportion of egg laid females in the groups
+# defined above (by inhibitor, experience, and statut)
+table_Ayant_pondu <- data %>%
+    dplyr::group_by(inhibitor, experience, statut) %>%
+    dplyr::summarise(
+        #nbre_femelles = dplyr::n(),
+        nbre_femelles = sum(insemination, na.rm = TRUE),
+        ayant_pondu = sum(insemination == TRUE & nbre_oeufs > 0),
+        non_pondu = nbre_femelles - ayant_pondu,
+    ) %>% 
+    dplyr::mutate(
+      prop_ayant_pondu = (ayant_pondu / nbre_femelles * 100),
+      prop_non_pondu = (non_pondu / nbre_femelles * 100),
+      # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+        ic_low = purrr::map2_dbl(ayant_pondu, nbre_femelles, ~ prop.test(.x, .y)$conf.int[1] * 100),
+        ic_high = purrr::map2_dbl(ayant_pondu, nbre_femelles, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    )
+
+# convert to factor and re-level to maintain the order we need
+table_Ayant_pondu$inhibitor <- factor(
+    table_Ayant_pondu$inhibitor,
+    levels = c("inhib1", "inhib3", "inhib4", "inhib10")
+    )
+```
+
+
+# lets plot the proportion of inseminated females
+# Plot including the pourcentages of pondu / non pondu 
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+
+# ---- 1️⃣ Préparation des données ----
+table_Ayant_pondu_long <- table_Ayant_pondu %>%
+  select(inhibitor, experience, statut, prop_ayant_pondu, prop_non_pondu) %>%
+  pivot_longer(
+    cols = c(prop_ayant_pondu, prop_non_pondu),
+    names_to = "etat_ponte",
+    values_to = "proportion"
+  ) %>%
+  # ✅ Normalisation pour que la somme des proportions = 1 par groupe
+  group_by(inhibitor, experience, statut) %>%
+  mutate(proportion = proportion / sum(proportion)) %>%
+  ungroup() %>%
+  mutate(
+    etat_ponte = recode(
+      etat_ponte,
+      "prop_ayant_pondu" = "Ayant pondu",
+      "prop_non_pondu" = "N’ayant pas pondu"
+    ),
+    experience = factor(
+      experience,
+      levels = c("exp1", "exp2", "exp3"),
+      labels = c("Expérience 1", "Expérience 2", "Expérience 3")
+    ),
+    inhibitor = factor(
+      inhibitor,
+      levels = c("inhib1", "inhib10", "inhib3", "inhib4"),
+      labels = c("Inhibiteur 1", "Inhibiteur 2", "Inhibiteur 3", "Inhibiteur 4") #inhib10 = "Inhibiteur 2" !!!
+    ),
+    statut = recode(statut,
+                    "ctrl" = "Contrôle",
+                    "test" = "Inhibiteur"),
+    fill_group = paste0(statut, "_", etat_ponte)
+  )
+
+# ---- 2️⃣ Couleurs ----
+couleurs <- c(
+  "Contrôle_Ayant pondu" = "#0072B2",
+  "Contrôle_N’ayant pas pondu" = "#99BFE3",
+  "Inhibiteur_Ayant pondu" = "#E69F00",
+  "Inhibiteur_N’ayant pas pondu" = "#F3C979"
+)
+
+# ---- 3️⃣ Graphique ----
+plot_Ayant_pondu <- ggplot(table_Ayant_pondu_long, aes(x = statut, y = proportion, fill = fill_group)) +
+  geom_col(width = 0.8, color = "white", position = position_stack()) +
+  # ✅ Pourcentages arrondis à l’unité #remove this geom_text () to not display the %
+  geom_text(
+            aes(label = percent(proportion, accuracy = 1)),
+            position = position_stack(vjust = 0.5),
+            size = 2.8,
+            color = "black"
+            ) +
+  coord_polar(theta = "y") +
+  facet_grid(experience ~ inhibitor) +
+  scale_fill_manual(
+    name = "Proportion de femelles",
+    values = couleurs,
+    labels = c(
+      "Contrôle_Ayant pondu" = "Contrôle – Ayant pondu",
+      "Contrôle_N’ayant pas pondu" = "Contrôle – N’ayant pas pondu",
+      "Inhibiteur_Ayant pondu" = "Inhibiteur – Ayant pondu",
+      "Inhibiteur_N’ayant pas pondu" = "Inhibiteur – N’ayant pas pondu"
+    ),
+    guide = guide_legend(
+      nrow = 2,
+      byrow = TRUE,
+      override.aes = list(color = "black")  # ✅ encadrer les carrés de légende
+    )
+  ) +
+  labs(x = NULL, y = NULL) +
+  theme_bw(base_size = 13) +
+  theme(
+    legend.position = "top",
+    legend.title = element_text(face = "bold",color = "black", size = 12),
+    legend.text = element_text(size = 10, color = "black"),
+    strip.background = element_rect(fill = "gray95", color = "gray80"),
+    strip.text = element_text(face = "plain", color = "black"),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    panel.spacing.x = unit(1.2, "lines"),
+    panel.spacing.y = unit(1, "lines")
+  )
+
+# ---- 4️⃣ Affichage ----
+plot_Ayant_pondu
+```
+
+```{r}
+#Save with more height (inches) 
+#ggsave("plot_prop_ayant_pondu_ok.png", plot = plot_Ayant_pondu, width = 8, height = 6, dpi = 300)
+```
+
+#  Test statistiques sur la proportion de femelles ayant pondu !!!
+
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    ayant_Pondu_ctrl <- sum(df$ayant_pondu[df$statut == "ctrl"])
+    total_ctrl  <- sum(df$nbre_femelles[df$statut == "ctrl"])
+    ayant_Pondu_test <- sum(df$ayant_pondu[df$statut == "test"])
+    total_test  <- sum(df$nbre_femelles[df$statut == "test"])
+    
+    prop_ctrl <- (ayant_Pondu_ctrl / total_ctrl) * 100
+    prop_test <- (ayant_Pondu_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(ayant_Pondu_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(ayant_Pondu_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(ayant_Pondu_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(ayant_Pondu_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        ayant_Pondu_ctrl,
+        total_ctrl - ayant_Pondu_ctrl,
+        ayant_Pondu_test,
+        total_test - ayant_Pondu_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(ayant_Pondu_ctrl, ayant_Pondu_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Test", "Test > Ctrl"))
+    
+    tibble(
+        Prop = "Ayant_Pond",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_Taux_ayant_Pondu <- table_Ayant_pondu %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+```
+
+
+#  Global (By Inhibitor  Ctrl Vs Test) Test statistiques sur la proportion de femelles ayant pondu !!!
+
+```{r message=FALSE}
+# generate the table with the proportion of egg laid females in the groups
+# defined above (by inhibitor, experience, and statut)
+table_global_Ayant_pondu <- data %>%
+    dplyr::group_by(inhibitor, statut) %>%
+    dplyr::summarise(
+        #nbre_femelles = dplyr::n(),
+        nbre_femelles = sum(insemination, na.rm = TRUE),
+        ayant_pondu = sum(insemination == TRUE & nbre_oeufs > 0),
+        non_pondu = nbre_femelles - ayant_pondu,
+    ) %>% 
+    dplyr::mutate(
+      prop_ayant_pondu = (ayant_pondu / nbre_femelles * 100),
+      prop_non_pondu = (non_pondu / nbre_femelles * 100),
+      # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+        ic_low = purrr::map2_dbl(ayant_pondu, nbre_femelles, ~ prop.test(.x, .y)$conf.int[1] * 100),
+        ic_high = purrr::map2_dbl(ayant_pondu, nbre_femelles, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    )
+
+# convert to factor and re-level to maintain the order we need
+table_global_Ayant_pondu$inhibitor <- factor(
+    table_global_Ayant_pondu$inhibitor,
+    levels = c("inhib1", "inhib10", "inhib3", "inhib4")
+    )
+```
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    ayant_Pondu_ctrl <- sum(df$ayant_pondu[df$statut == "ctrl"])
+    total_ctrl  <- sum(df$nbre_femelles[df$statut == "ctrl"])
+    ayant_Pondu_test <- sum(df$ayant_pondu[df$statut == "test"])
+    total_test  <- sum(df$nbre_femelles[df$statut == "test"])
+    
+    prop_ctrl <- (ayant_Pondu_ctrl / total_ctrl) * 100
+    prop_test <- (ayant_Pondu_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(ayant_Pondu_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(ayant_Pondu_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(ayant_Pondu_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(ayant_Pondu_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        ayant_Pondu_ctrl,
+        total_ctrl - ayant_Pondu_ctrl,
+        ayant_Pondu_test,
+        total_test - ayant_Pondu_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(ayant_Pondu_ctrl, ayant_Pondu_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Test", "Test > Ctrl"))
+    
+    tibble(
+        Prop = "Ayant_Pond",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_global_Taux_ayant_Pondu <- table_Ayant_pondu %>%
+    #group_by(inhibitor, experience) %>%
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+```
+
+##### Inhibitors effect on mosquitoe fecundity and cycle length !!!!
 
 The section below focus on understanding the impact of the inhibitors on:
 
@@ -322,19 +1135,138 @@ The section below focus on understanding the impact of the inhibitors on:
 
 The fecundity is represented by the variable `nbre_oeufs`.
 The length of mosquitoes reproduction cycle is represented by the
-`duree_g_ponte` variable.
+`duree_p_emergence` variable.
 
 Given that only inseminated mosquitoes will have a reproduction cycle that can
-generate offspring, we filtered the data such that only blood fed mosquitoes
+generate offspring, we filtered the data such that only inseminated mosquitoes
 will be considered in the downstream analyses. We also removed all entries in
-the dataset where the number of laid eggs is not greater than 0.
+the dataset where the number of laid eggs is not greater than 0 as We are just interested in females that have laid eggs in order to fellow their reproduction params 
 
 ```{r}
-# only keep the inseminated females
+# only keep the inseminated and eggs laid females
 data_for_analysis <- data %>%
-  dplyr::filter(insemination & nbre_oeufs > 0)
+  dplyr::filter(insemination & nbre_oeufs > 0) #insemination == TRUE
+```
+```{r}
+hist(data_for_analysis$nbre_oeufs, 100)
+ggplot2::ggplot(
+  data_for_analysis, aes(nbre_oeufs, fill = statut)) + 
+  geom_histogram() +
+  # facet_wrap( ~ experience, ncol = 2) +
+  facet_grid(experience ~ inhibitor)
+  theme_bw()
 ```
 
+The distribution looks quite normal. However the data are on different scales,
+with the values ranging between `r range(data_for_analysis$nbre_oeufs)[1]` and
+`r range(data_for_analysis$nbre_oeufs)[2]`. To remove the effect of different
+scales on the downstream analysis, we will normalise the data using the
+**z-score** method.
+
+
+```{r}
+# calculate z-score by inhibitor separately
+data_for_analysis$normalised_by_inhib <- ave(
+  data_for_analysis$nbre_oeufs,
+  data_for_analysis$inhibitor,
+  FUN = scale
+)
+
+# calculate log values
+data_for_analysis$log_normalised <- ave(
+  data_for_analysis$nbre_oeufs,
+  data_for_analysis$inhibitor,
+  FUN = function(x) log(x)
+)
+```
+# histogramme de la distribution du nbre d'oeufs normalisée
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# --- Recodage des variables ---
+data_plot <- data_for_analysis %>%
+    mutate(
+        # Renommer statut
+        statut = recode(statut,
+                        "ctrl" = "Contrôle",
+                        "test" = "Inhibiteur"),
+        
+        # Recode inhibitor : inhib10 -> inhib2
+        inhibitor = recode(inhibitor,
+                           "inhib10" = "inhib2"),
+        
+        # Renommer inhibitor en Inhibiteur 1-4
+        inhibitor = recode(inhibitor,
+                           "inhib1" = "Inhibiteur 1",
+                           "inhib2" = "Inhibiteur 2",
+                           "inhib3" = "Inhibiteur 3",
+                           "inhib4" = "Inhibiteur 4"),
+        
+        # Renommer experience
+        experience = recode(experience,
+                            "exp1" = "Expérience 1",
+                            "exp2" = "Expérience 2",
+                            "exp3" = "Expérience 3")
+    )
+
+# --- Création de l'histogramme ---
+histogram_oeufs <- ggplot(data_plot, aes(x = nbre_oeufs, fill = statut)) +
+    geom_histogram(color = "black", bins = 30, alpha = 0.8) +
+    facet_grid(experience ~ inhibitor) +
+    scale_fill_manual(
+        name = "Statut",
+        values = c("Contrôle" = "#0072B2", "Inhibiteur" = "#E69F00")
+    ) +
+    scale_x_continuous(
+        breaks = seq(0, 300, 50),
+        name = "Nombre d'œufs"
+    ) +
+    scale_y_continuous(
+        breaks = seq(0, 8, 2)
+    ) +
+    labs(
+        y = "Fréquence"
+    ) +
+    theme_bw(base_size = 16) +
+    theme(
+        text = element_text(family = "serif"),
+        axis.title = element_text(size = 14, face = "bold"),
+        axis.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 35, hjust = 1),   # pour éviter chevauchement
+        strip.text = element_text(size = 14, face = "bold"),
+        legend.position = "top",
+        legend.title = element_text(face = "bold", size = 14),
+        legend.text = element_text(size = 14),
+        legend.box = "horizontal",
+        legend.box.just = "center",
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+    )
+
+# --- Afficher le graphique ---
+histogram_oeufs
+```
+```{r}
+#Save with more height (inches) 
+#ggsave("histogram_nbre_oeufs_ok.png", plot = histogram_oeufs, width = 8, height = 7, dpi = 300)
+```
+
+#Mean number of eggs 
+
+```{r}
+Table_mean_eggs <- data_for_analysis %>%
+    dplyr::group_by(inhibitor, experience, statut) %>%
+    summarise(
+        nbre_femelles = dplyr::n(),
+        total_oeufs = sum(nbre_oeufs, na.rm = TRUE),
+        moyenne = mean(nbre_oeufs, na.rm = TRUE),
+        ecart_type = sd(nbre_oeufs, na.rm = TRUE),  # La dispersion des valeurs autours de la moyenne 
+        moyenne_sd = ecart_type / sqrt(nbre_femelles),  #erreur standard de la moyenne (moyenne_sd) = écart-type/√n, #donne plus de precision à l'estimation de la moyenne.
+    )
+
+```
+
+# Number of eggs laid by females 
 There are `r nrow(data_for_analysis)` inseminated females. The distribution of
 the number of laid eggs per inhibitor is shown in the figure below.
 
@@ -353,40 +1285,6 @@ ggplot(data_for_analysis,
 ```
 
 ```{r}
-hist(data_for_analysis$nbre_oeufs, 100)
-ggplot2::ggplot(
-  data_for_analysis, aes(nbre_oeufs, fill = statut)) + 
-  geom_histogram() +
-  # facet_wrap( ~ experience, ncol = 2) +
-  facet_grid(experience ~ inhibitor)
-  theme_bw()
-```
-
-The distribution looks quite normal. However the data are on different scales,
-with the values ranging between `r range(data_for_analysis$nbre_oeufs)[1]` and
-`r range(data_for_analysis$nbre_oeufs)[2]`. To remove the effect of different
-scales on the downstream analysis, we will normalise the data using the
-**z-score** method.
-
-```{r}
-# calculate z-score by inhibitor separately
-data_for_analysis$normalised_by_inhib <- ave(
-  data_for_analysis$nbre_oeufs,
-  data_for_analysis$inhibitor,
-  FUN = scale
-)
-
-# calculate log values
-data_for_analysis$log_normalised <- ave(
-  data_for_analysis$nbre_oeufs,
-  data_for_analysis$inhibitor,
-  FUN = function(x) log(x)
-)
-```
-
-
-
-```{r}
 plot_ponte <- ggplot2::ggplot(
   data_for_analysis, aes(x = experience, y = nbre_oeufs, fill = statut)) + 
   geom_boxplot() +
@@ -400,6 +1298,327 @@ plot_ponte <- ggplot2::ggplot(
 plot_ponte
 ```
 
+
+# Plot make up + pvalues mean differences and significance by FS !!!
+
+```{r} 
+library(dplyr)
+library(ggplot2)
+
+# Mapping numérique pour l'axe x
+x_mapping <- data.frame(
+    experience = c("exp1", "exp2", "exp3"),
+    x_num = 1:3
+)
+
+# Fonction pour calculer p et le label de signification
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$nbre_oeufs[df$statut=="ctrl"]
+    test_vals <- df$nbre_oeufs[df$statut=="test"]
+    
+    # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(nbre_oeufs ~ statut, data=df)$p.value
+        test_used <- "t.test"
+    } else {
+        #p <- wilcox.test(nbre_oeufs ~ statut, data=df)$p.value
+        p <- wilcox.test(nbre_oeufs ~ statut, data=df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+    return(c(p = p, label = label, test_used = test_used))
+}
+
+# Calcul des p-values et labels pour chaque inhibiteur x expérience
+pval_data_mean_egg <- data_for_analysis %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        tmp = list(get_pvalue_label(cur_data())),
+        max_y = max(nbre_oeufs, na.rm = TRUE),
+        .groups = "drop"
+    ) %>%
+    tidyr::unnest_wider(tmp) %>%     # séparer p et label
+    left_join(x_mapping, by="experience") %>%
+    mutate(
+        y.position = max_y * 1.05,          # barre horizontale pour p value
+        label_y = y.position + max_y*0.095   # label légèrement au-dessus
+    )
+
+# Plot avec barre horizontale et labels significatifs
+plot_ponte <- ggplot(data_for_analysis,
+                     aes(x = experience, y = nbre_oeufs, fill = statut)) +
+    geom_boxplot(color = "black", position = position_dodge(width = 0.8)) +
+    facet_wrap(
+        ~ factor(
+            inhibitor,
+            levels = c("inhib1", "inhib10", "inhib3", "inhib4"),
+            labels = c("Inhibiteur 1", "Inhibiteur 2", "Inhibiteur 3", "Inhibiteur 4") #inhib10 = "Inhibiteur 2" !!!
+        ),
+        ncol = 2
+    ) +
+    scale_x_discrete(
+        labels = c(
+            "exp1" = "Expérience 1",
+            "exp2" = "Expérience 2",
+            "exp3" = "Expérience 3"
+        )
+    ) +
+    scale_fill_manual(
+        name = "Statut",
+        values = c("ctrl" = "#0072B2", "test" = "#E69F00"),
+        labels = c("Contrôle", "Inhibiteur")
+    ) +
+    labs(x = "Expériences", y = "Nombre d'œufs") +
+    theme_bw() +
+    theme(
+        text = element_text(size = 14),
+        legend.position = "top",
+        strip.background = element_rect(fill = "gray80"),
+        axis.title.x = element_text(margin = margin(t = 5)), #margin (t) is to add space on top of the title, betwen the x title and the x axis,
+        axis.title.y = element_text(margin = margin(r = 5)), #margin (r) is to add space at the right of the title, betwen the y title and the y axis,
+        strip.text = element_text(face = "plain")
+    ) +
+    # Barre horizontale Ctrl/Test
+    geom_segment(
+        data = pval_data_mean_egg,
+        aes(x = x_num - 0.25, xend = x_num + 0.25, y = y.position, yend = y.position),
+        inherit.aes = FALSE
+    ) +
+    # Label significatif (ns, *, **, ***) légèrement au-dessus
+    geom_text(
+        data = pval_data_mean_egg,
+        aes(x = x_num, y = label_y, label = label),
+        inherit.aes = FALSE,
+        size = 4
+    ) +
+scale_y_continuous(breaks = seq(0, 200, 100))
+
+plot_ponte
+
+```
+# plot with Mean number of eggs by FS !
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# --- Paramètres de positionnement (ajustables) ---
+dodge_width <- 0.8   # doit être le même pour boxplot et pour les points
+box_width <- 0.6     # largeur des boxplots visuelles
+offset <- 0.22       # décalage numérique pour tracer les segments p-value (≈ dodge_width/2)
+
+# --- Assurer les niveaux d'experience (ordre) ---
+#data_for_analysis <- data_for_analysis %>%
+    #mutate(experience = factor(experience, levels = c("exp1","exp2","exp3")))
+
+# --- Mean per group (correct placement) ---
+mean_data <- data_for_analysis %>%
+    group_by(inhibitor, experience, statut) %>%
+    summarise(mean_eggs = mean(nbre_oeufs, na.rm = TRUE), .groups = "drop")
+
+# --- Prepare pval_data with numeric x positions (for correct segment placement) ---
+# we assume you have pval_data_mean_egg as before (with x_num numeric 1..3)
+pval_data2 <- pval_data_mean_egg %>%
+    # numeric center position already in x_num; compute left/right for ctrl/test segments
+    mutate(
+        x_ctrl = x_num - offset,
+        x_test = x_num + offset
+    )
+
+# --- THE PLOT ---
+plot_ponte <- ggplot(data_for_analysis,
+                     aes(x = experience, y = nbre_oeufs, fill = statut)) +
+    
+    # boxplots (dodge so ctrl & test side-by-side)
+    geom_boxplot(color = "black",
+                 position = position_dodge(width = dodge_width),
+                 width = box_width) +
+    
+    # mean point for each box: use mean_data and same dodge
+    geom_point(
+        data = mean_data,
+        aes(x = experience, y = mean_eggs, fill = statut),
+        position = position_dodge(width = dodge_width),
+        shape = 16, size = 3.5, stroke = 0.6,
+        color = "black"
+    ) +
+    
+    facet_wrap(
+        ~ factor(
+            inhibitor,
+            levels = c("inhib1", "inhib10", "inhib3", "inhib4"),
+            labels = c("Inhibiteur 1", "Inhibiteur 2", "Inhibiteur 3", "Inhibiteur 4")
+        ),
+        ncol = 2
+    ) +
+    
+    scale_x_discrete(
+        labels = c("exp1" = "Expérience 1",
+                   "exp2" = "Expérience 2",
+                   "exp3" = "Expérience 3")
+    ) +
+    
+    scale_fill_manual(
+        name = "Statut",
+        values = c("ctrl" = "#0072B2", "test" = "#E69F00"),
+        labels = c("Contrôle", "Inhibiteur")
+    ) +
+    
+    labs(x = "Expériences", y = "Nombre d'œufs") +
+    theme_bw() +
+    theme(
+        text = element_text(size = 14),
+        legend.position = "top",
+        strip.background = element_rect(fill = "gray80"),
+        axis.title.x = element_text(margin = margin(t = 5)),
+        axis.title.y = element_text(margin = margin(r = 5)),
+        strip.text = element_text(face = "plain")
+    ) +
+    
+    # P-value bar: draw between the two boxes using the numeric x positions computed
+    geom_segment(
+        data = pval_data2,
+        aes(x = x_ctrl, xend = x_test, y = y.position, yend = y.position),
+        inherit.aes = FALSE
+    ) +
+    
+  # vertical small ticks at ends (optional) to look like a bracket)
+    #geom_segment(
+       # data = pval_data2,
+       # aes(x = x_ctrl, xend = x_ctrl, y = y.position, yend = y.position - (max_y * 0.02)),
+        #inherit.aes = FALSE
+    #) +
+    #geom_segment(
+        #data = pval_data2,
+       # aes(x = x_test, xend = x_test, y = y.position, yend = y.position - (max_y * 0.02)),
+       # inherit.aes = FALSE
+    #) +
+    
+# Label for significance (centered)
+    geom_text(
+        data = pval_data2,
+        aes(x = x_num, y = label_y, label = label),
+        inherit.aes = FALSE,
+        size = 4
+    ) +
+    
+    scale_y_continuous(breaks = seq(0, 200, 100))
+
+# --- Afficher ---
+plot_ponte
+```
+
+
+```{r}
+#Save with more height (inches) 
+#ggsave("plot_nbre_oeufs_ok.png", plot = plot_ponte, width = 8, height = 6.5, dpi = 300)
+```
+
+#Global Mean number of eggs 
+
+```{r}
+Table_global_mean_eggs <- data_for_analysis %>%
+    dplyr::group_by(inhibitor, statut) %>%
+    summarise(
+        nbre_femelles = dplyr::n(),
+        total_oeufs = sum(nbre_oeufs, na.rm = TRUE),
+        moyenne = mean(nbre_oeufs, na.rm = TRUE),
+        ecart_type = sd(nbre_oeufs, na.rm = TRUE),  # La dispersion des valeurs autours de la moyenne 
+        moyenne_sd = ecart_type / sqrt(nbre_femelles), #ESM = sd/# erreur standard de la moyenne (mean precision)
+        .groups = "drop"
+    )
+
+```
+
+#Global Mean number of eggs Pvals (group by inhibitors)
+```{r} 
+library(dplyr)
+library(tidyr)
+library(tibble)
+
+get_pvalue_label <- function(df){
+
+    # Extract values
+    ctrl_vals <- df$nbre_oeufs[df$statut == "ctrl"]
+    test_vals <- df$nbre_oeufs[df$statut == "test"]
+
+    # Check normality
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Choose the appropriate test
+    if(normal_ctrl & normal_test){
+        p <- t.test(nbre_oeufs ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(nbre_oeufs ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+
+    # Choose significance label
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+
+    # Direction of effect
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
+
+    if(mean_test > mean_ctrl){
+        direction <- "test > ctrl"
+    } else if(mean_test < mean_ctrl){
+        direction <- "ctrl > test"
+    } else {
+        direction <- "equal"
+    }
+
+    return(tibble(
+        stade = "oeufs",
+        mean_ctrl = mean_ctrl,
+        mean_test = mean_test,
+        p = p,
+        label = label,
+        test_used = test_used,
+        direction = direction
+    ))
+}
+
+
+
+pval_global_mean_eggs <- data_for_analysis %>%
+    group_by(inhibitor) %>%
+    #group_by(inhibitor, experience) %>%
+    summarise(
+        res = list(get_pvalue_label(cur_data())),
+        .groups = "drop"
+    ) %>%
+    unnest(res)
+```
+
+#-----------------------------------------------------------
+
 ```{r}
 # select the data for inhibitor 1
 inhibitor1 <- data_for_analysis %>%
@@ -409,11 +1628,11 @@ inhibitor1 <- data_for_analysis %>%
 lm_num_eggs <- lm(nbre_oeufs ~ 1, data = inhibitor1)
 
 # create the diagnostic plot, indicating a QQ-plot
-lm_num_eggs |>
+lm_num_eggs %>% 
   ggResidpanel::resid_panel(plots = "qq")
 
 # Shapiro-Wilk test
-inhibitor1 |> 
+inhibitor1 %>% 
   rstatix::shapiro_test(nbre_oeufs)
 
 # test the difference in mean number of laid eggs between control and test mosquitoes in every experience
@@ -455,11 +1674,11 @@ inhibitor4 <- data_for_analysis %>%
 lm_num_eggs <- lm(nbre_oeufs ~ 1, data = inhibitor4)
 
 # create the diagnostic plot, indicating a QQ-plot
-lm_num_eggs |>
+lm_num_eggs %>%
   ggResidpanel::resid_panel(plots = "qq")
 
 # Shapiro-Wilk test
-inhibitor4 |> 
+inhibitor4 %>% 
   rstatix::shapiro_test(nbre_oeufs)
 
 # test the difference in mean number of laid eggs between control and test mosquitoes in every experience
@@ -495,7 +1714,8 @@ bxp_inhib4 + ggpubr::stat_pvalue_manual(
 # put the plots together
 bxp_inhib1 + bxp_inhib4
 ```
-
+-----------------------------------------------------------
+----------------------------------------------------------
 
 ## Inhibitors effect on mosquitoe fertility and eclosion delay
 
@@ -510,8 +1730,8 @@ data_for_analysis$taux_eclosion <- round(data_for_analysis$taux_eclosion,
 
 # filter out rows where the duration of eclosion is NA due to missing values in
 # either the 'date_ponte' or 'date_eclosion' column
-data_for_analysis |>
-  # dplyr::filter(!is.na(duree_p_eclosion)) |>
+data_for_analysis %>%
+  #dplyr::filter(!is.na(duree_p_eclosion)) %>%
   ggplot(aes(x = duree_p_eclosion, y = taux_eclosion, color = statut)) +
   # geom_violin(trim = FALSE) +  # Use trim = TRUE to cut off the tails
   # geom_boxplot(width = 0.1, position = position_dodge(0.9)) #, color = "black"
@@ -521,6 +1741,7 @@ data_for_analysis |>
   theme_bw()
 ```
 
+---------------
 
 ## Inhibitors effect on mosquitoe nymphose rate
 
@@ -533,13 +1754,13 @@ data_for_analysis$taux_nymphose <- round(data_for_analysis$taux_nymphose,
                                          digits = 2)
 data_for_analysis$duree_p_nymphose <- as.numeric(data_for_analysis$duree_p_nymphose)
 
-test <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+test <- data_for_analysis %>%
+  dplyr::group_by(experience, inhibitor, statut) %>%
   dplyr::count(duree_p_nymphose)
 
 # time distribution only
-data_for_analysis |>
-  # dplyr::filter(!is.na(duree_p_eclosion)) |>
+data_for_analysis %>%
+  dplyr::filter(nbre_larves > 0) %>%
   ggplot(aes(x = duree_p_nymphose, color = statut)) +
   geom_histogram(alpha = 0.5, position="identity") +
   facet_grid(experience ~ inhibitor) +
@@ -548,7 +1769,8 @@ data_for_analysis |>
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
   
 # distribution of rate over time
-data_for_analysis |>
+data_for_analysis %>%
+  dplyr::filter(nbre_larves > 0) %>%
   ggplot(aes(x = duree_p_nymphose, y = taux_nymphose, color = statut)) +
   geom_jitter(width = 0.2, height = 0.2, size = 1) +
   facet_grid(experience ~ inhibitor) +
@@ -561,10 +1783,8 @@ variable with the emergence length: `duree_p_emergence`
 variable with the emergence rate: `taux_emergence`
 
 ```{r}
-# taux emergence is the ration between the number of adults and the nymphe
+# taux emergence is the ratio between the number of adults and the nymphe
 # but this need to filter out all mosquitoes with 0 number of nymphe
-data_for_analysis <- data_for_analysis |>
-  dplyr::filter(nbre_nymphes > 0)
 data_for_analysis$taux_emergence <- round(as.numeric(
   data_for_analysis$nbre_adultes / data_for_analysis$nbre_nymphes
 ) * 100, digits = 2)
@@ -573,8 +1793,9 @@ data_for_analysis$duree_p_emergence <- as.numeric(
 )
 
 # distribution of rate over time
-data_for_analysis |>
-  ggplot(aes(x = duree_p_emergence, y = taux_emergence, color = statut)) +
+data_for_analysis %>%
+  dplyr::filter(nbre_nymphes > 0) %>%  
+ggplot(aes(x = duree_p_emergence, y = taux_emergence, color = statut)) +
   geom_point() +
   # geom_jitter(width = 0.2, height = 0.2, size = 1) +
   facet_grid(experience ~ inhibitor) +
@@ -582,34 +1803,86 @@ data_for_analysis |>
   scale_y_continuous(breaks = seq(0, 100, 10))
 ```
 
-## Variation of mean numbers
-
+#Add the mean duration and emergence_rate line for each (Fatoumata !!!)
 ```{r}
-phase_ponte <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+# Compute the mean values per group
+mean_lines <- data_for_analysis %>%
+  dplyr::filter(nbre_nymphes > 0) %>%  
+  group_by(statut, experience, inhibitor) %>%
+  summarise(
+    mean_x = mean(duree_p_emergence, na.rm = TRUE),
+    mean_y = mean(taux_emergence, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Then plot
+ggplot(data_for_analysis, aes(x = duree_p_emergence, y = taux_emergence, color = statut)) +
+  
+  # smaller data points
+  geom_point(size = 1) +
+
+  # vertical mean line (dashed)
+  geom_segment(data = mean_lines,
+               aes(x = mean_x, xend = mean_x, y = 0, yend = mean_y, color = statut),
+               linetype = "dashed", size = 0.5) +
+
+  # horizontal mean line (dashed)
+  geom_segment(data = mean_lines,
+               aes(x = 0, xend = mean_x, y = mean_y, yend = mean_y, color = statut),
+               linetype = "dashed", size = 0.5) +
+
+  # mean point (intersection, larger)
+  geom_point(data = mean_lines, aes(x = mean_x, y = mean_y, color = statut),
+             shape = 18, size = 4) +  # size increased for visibility
+
+  facet_grid(experience ~ inhibitor) +
+  theme_bw() +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  scale_x_continuous(breaks = seq(0, 20, 5))
+
+```
+
+
+## Variation of mean numbers FS !
+
+```{r message=FALSE}
+phase_ponte <- data_for_analysis %>% 
+  dplyr::filter(nbre_oeufs > 0) %>%
+  dplyr::group_by(experience, inhibitor, statut) %>% 
   summarise(
     moyenne = mean(nbre_oeufs, na.rm = TRUE),
+    ecart_type = sd(nbre_oeufs, na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()), #erreur_standard de la moyenne = écart-type/√n, #precision de la moyenne
     stade = "oeufs"
   )
 
-phase_eclosion <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+phase_eclosion <- data_for_analysis %>% 
+  dplyr::filter(nbre_larves > 0) %>%  
+  dplyr::group_by(experience, inhibitor, statut) %>% 
   summarise(
     moyenne = mean(nbre_larves, na.rm = TRUE),
+     ecart_type = sd(nbre_larves, na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()), #erreur_standard, #precision de la moyenne
     stade = "larves"
   )
 
-phase_nymphose <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+phase_nymphose <- data_for_analysis %>%
+  dplyr::filter(nbre_nymphes > 0) %>%  
+  dplyr::group_by(experience, inhibitor, statut) %>% 
   summarise(
     moyenne = mean(nbre_nymphes, na.rm = TRUE),
+     ecart_type = sd(nbre_nymphes, na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()), #erreur_standard, #precision de la moyenne
     stade = "nymphes"
   )
 
-phase_emergence <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+phase_emergence <- data_for_analysis %>% 
+  dplyr::filter(nbre_adultes > 0) %>%  
+  dplyr::group_by(experience, inhibitor, statut) %>% 
   summarise(
     moyenne = mean(nbre_adultes, na.rm = TRUE),
+     ecart_type = sd(nbre_adultes, na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()), #erreur_standard, #precision de la moyenne
     stade = "adultes"
   )
 
@@ -618,32 +1891,61 @@ resume_cycle <- rbind(
 )
 ```
 
+#Labels legends (Fatoumata)
 ```{r}
+resume_cycle$inhibitor <- factor(
+  resume_cycle$inhibitor,
+  levels = c("inhib1", "inhib10", "inhib3", "inhib4")
+)
+
 resume_cycle$stade <- factor(
   resume_cycle$stade,
   levels = c("oeufs", "larves", "nymphes", "adultes")
 )
-ggplot(resume_cycle, aes(x = stade, y = moyenne, color = statut, group = statut)) +
-  geom_line() +
-  geom_point(size = 2) +
-  # geom_text(aes(label = moyenne), vjust = -0.6) +
-  labs(x = "cycle", y = "nombre moyen") +
-  theme_minimal() +
-  facet_grid(experience ~ inhibitor) +
-  theme(axis.text = element_text(angle = 45))
-```
 
+plot_mean_dev_cycle <- ggplot(resume_cycle, aes(x = stade, y = moyenne, color = statut, group = statut)) +
+  geom_line(size = 0.75) +
+  geom_point(size = 2.5) +
+  labs(x = "Stades de développement", y = "Nombres moyens", color = "Statut") +
+  theme_minimal() +
+  facet_grid(
+    experience ~ inhibitor,
+    labeller = labeller(
+      inhibitor = c(
+        inhib1 = "Inhibiteur 1",
+        inhib10 = "Inhibiteur 2",
+        inhib3 = "Inhibiteur 3",
+        inhib4 = "Inhibiteur 4"
+      ),
+      experience = c(
+        exp1 = "Expérience 1",
+        exp2 = "Expérience 2",
+        exp3 = "Expérience 3"
+      )
+    )
+  ) +
+  scale_color_manual(
+    name = "Statut", 
+    values = c("ctrl" = "#0072B2", "test" = "#E69F00"),
+    labels = c("ctrl" = "Contrôle", "test" = "Inhibiteur")
+  ) +
+  theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12, angle = 35, hjust = 1, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),                 
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 7)), #margin (t) is to add space on top of the title, betwen the x title and the x axis
+    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 7)), #margin (t) is to add space at right of the title, betwen the x title and the x axis,
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold", color = "black"),
+    legend.text = element_text(size = 12, face = "bold"),
+    strip.text = element_text(face = "bold", size = 12) # facet titles
+  ) +
+  scale_y_continuous(breaks = seq(0, 120, 20))
+plot_mean_dev_cycle
+```
 ```{r}
-ggplot(resume_cycle, aes(x = stade, y = moyenne, group = statut)) +
-  # geom_line(alpha = 0.6) +
-  # geom_point(size = 1.8, alpha = 0.8) +
-  geom_smooth(aes(color = statut, fill = statut),
-              method = "lm", se = TRUE, linewidth = 0.9, alpha = 0.20) +  # per-sample lm
-  labs(x = "Cycle", y = "nombre moyen", color = "Statut",
-       title = "Per-sample trends with linear fits") +
-  theme_minimal(base_size = 12) +
-  theme(legend.position = "top")
-resume_cycle
+#Save with more height (inches) 
+#ggsave("plot_mean_dev_cycle_ok.png", plot = plot_mean_dev_cycle, width = 8, height = 6, dpi = 300)
 ```
 ##Fatoumata_Curiosity !!!!
 ## Variation of mean durations
@@ -654,32 +1956,44 @@ data_for_analysis$duree_p_eclosion <- as.numeric(data_for_analysis$duree_p_eclos
 data_for_analysis$duree_p_nymphose <- as.numeric(data_for_analysis$duree_p_nymphose)
 data_for_analysis$duree_p_emergence <- as.numeric(data_for_analysis$duree_p_emergence)
 ```
-```{r}
-delay_ponte <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+```{r message=FALSE}
+delay_ponte <- data_for_analysis %>%  
+  dplyr::filter(nbre_oeufs > 0) %>%  
+  dplyr::group_by(inhibitor,experience, statut) %>%  
   summarise(
     moyenne = mean(duree_g_ponte, na.rm = TRUE),
+    ecart_type = sd(duree_g_ponte, na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
     phase = "ponte"
   )
 
-delay_eclosion <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+delay_eclosion <- data_for_analysis %>%  
+  dplyr::filter(nbre_larves > 0) %>%  
+  dplyr::group_by(inhibitor,experience, statut) %>%  
   summarise(
     moyenne = mean((duree_g_ponte+duree_p_eclosion), na.rm = TRUE),
+    ecart_type = sd((duree_g_ponte+duree_p_eclosion), na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
     phase = "eclosion"
   )
 
-delay_nymphose <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+delay_nymphose <- data_for_analysis %>%  
+  dplyr::filter(nbre_nymphes > 0) %>%  
+  dplyr::group_by(inhibitor,experience, statut) %>%  
   summarise(
     moyenne = mean((duree_g_ponte+duree_p_nymphose), na.rm = TRUE),
+    ecart_type = sd((duree_g_ponte+duree_p_nymphose), na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
     phase = "nymphose"
   )
 
-delay_emergence <- data_for_analysis |>
-  dplyr::group_by(experience, inhibitor, statut) |>
+delay_emergence <- data_for_analysis %>%  
+  dplyr::filter(nbre_adultes > 0) %>%  
+  dplyr::group_by(inhibitor,experience, statut) %>%  
   summarise(
     moyenne = mean((duree_g_ponte+duree_p_emergence), na.rm = TRUE),
+    ecart_type = sd((duree_g_ponte+duree_p_emergence), na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
     phase = "emergence"
   )
 
@@ -693,16 +2007,1539 @@ resume_cycle_durations$phase <- factor(
   resume_cycle_durations$phase,
   levels = c("ponte", "eclosion", "nymphose", "emergence")
 )
-ggplot(resume_cycle_durations, aes(x = phase, y = moyenne, color = statut, group = statut)) +
-  geom_line() +
-  geom_point(size = 2) +
-  # geom_text(aes(label = moyenne), vjust = -0.6) +
-  labs(x = "cycle", y = "duree moyen") +
+
+resume_cycle_durations$inhibitor <- factor(
+  resume_cycle_durations$inhibitor,
+  levels = c("inhib1","inhib10", "inhib3", "inhib4")
+)
+
+plot_duration_dev_cycle <- ggplot(resume_cycle_durations, aes(x = phase, y = moyenne, color = statut, group = statut)) +
+ geom_line(size = 0.75) +
+  geom_point(size = 2.5) +
+  labs(x = "Etapes du cycle de développement", y = "Nombres moyens de jours", color = "Statut") +
   theme_minimal() +
-  facet_grid(experience ~ inhibitor) +
-  theme(axis.text = element_text(angle = 45)) +
-  scale_y_continuous(breaks = seq(0, 20, 2))
+  facet_grid(
+    experience ~ inhibitor,
+    labeller = labeller(
+      inhibitor = c(
+        inhib1 = "Inhibiteur 1",
+        inhib3 = "Inhibiteur 3",
+        inhib10 = "Inhibiteur 2",
+        inhib4 = "Inhibiteur 4"
+      ),
+      experience = c(
+        exp1 = "Expérience 1",
+        exp2 = "Expérience 2",
+        exp3 = "Expérience 3"
+      )
+    )
+  ) +
+  scale_color_manual(
+    values = c("ctrl" = "#0072B2", "test" = "#E69F00"),
+    labels = c("ctrl" = "Contrôle", "test" = "Inhibiteur")
+  ) +
+  theme(
+    text = element_text(size = 13),
+    axis.text.x = element_text(size = 13, angle = 35, hjust = 1, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black", margin = margin(t = 12)), #margin (t) is to add space on top of the y axis elements
+    axis.title.x = element_text(size = 13, face = "bold", margin = margin(t = 7)), #margin (t) is to add space on top of the title, betwen the x title and the x axis
+    axis.title.y = element_text(size = 13, face = "bold", margin = margin(r = 7)), #margin (t) is to add space at right of the title, betwen the x title and the x axis,
+    legend.position = "top",
+    legend.title = element_text(size = 13, face = "bold", color = "black"),
+    legend.text = element_text(size = 13, face = "bold"),
+    strip.text = element_text(face = "bold", size = 13) # facet titles
+  ) +
+  scale_y_continuous(breaks = seq(0, 20, 2), expand = expansion(mult = c(0.05, 0.1)))
+plot_duration_dev_cycle
+```
+```{r}
+#Save with more height (inches) 
+#ggsave("plot_duration_dev_cycle_ok.png", plot = plot_duration_dev_cycle, width = 8, height = 7, dpi = 300)
+```
+```{r}
+ggplot(resume_cycle, aes(x = stade, y = moyenne, group = statut)) +
+  # geom_line(alpha = 0.6) +
+  # geom_point(size = 1.8, alpha = 0.8) +
+  geom_smooth(aes(color = statut, fill = statut),
+              method = "lm", se = TRUE, linewidth = 0.9, alpha = 0.20) +  # per-sample lm
+  labs(x = "Cycle", y = "nombre moyen", color = "Statut",
+       title = "Per-sample trends with linear fits") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
+resume_cycle
+```
+# effect of inhibitors on the sex-ratio
+```{r message=FALSE}
+#Prepartion de la table
+table_sexe <- data_for_analysis %>%
+    dplyr::filter(nbre_adultes > 0) %>%  
+    dplyr::group_by(inhibitor, experience, statut) %>%
+    dplyr::summarise(
+        adultes = sum(nbre_adultes, na.rm = TRUE),
+        males = sum(nbre_males, na.rm = TRUE),
+        femelles = sum(nbre_femelles, na.rm = TRUE),) %>% 
+    dplyr::mutate(
+        prop_femelles = (femelles / adultes) * 100,
+        prop_males = (males / adultes) * 100
+    )
+
+# convert to factor and re-level to maintain the order we need
+table_sexe$inhibitor <- factor(
+    table_sexe$inhibitor,
+    levels = c("inhib1", "inhib3", "inhib4", "inhib10")
+)
+```
+
+```{r}
+#creation du plot
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Convert to long format ----
+table_sexe_long <- table_sexe %>%
+    tidyr::pivot_longer(
+        cols = c(prop_femelles, prop_males),
+        names_to = "Sexe",
+        values_to = "proportion"
+    ) %>%
+    dplyr::mutate(
+        Sexe = dplyr::recode(Sexe,
+                             "prop_femelles" = "Femelles",
+                             "prop_males" = "Mâles"),
+        Sexe = factor(Sexe, levels = c("Mâles", "Femelles")), # Femelles bottom
+        experience = factor(experience,
+                            levels = c("exp1", "exp2", "exp3"),
+                            labels = c("Expérience 1", "Expérience 2", "Expérience 3")),
+        statut = dplyr::recode(statut,
+                               "ctrl" = "Contrôle",
+                               "test" = "Inhibiteur"),
+        inhibitor = factor(inhibitor,
+                           levels = c("inhib1", "inhib10", "inhib3", "inhib4"),
+                           labels = c("Inhibiteur 1", "Inhibiteur 2", "Inhibiteur 3", "Inhibiteur 4"))
+    )
+
+# ---- 3️⃣ Refined, thesis-ready color palette ----
+couleurs <- c(
+    "Femelles" = "#E7B800", #"sienna3", #"tomato3",
+    "Mâles" = "#00AFBB"  #"olivedrab"
+)
+
+# ---- 4️⃣ Plot ----
+plot_sex_ratio <- ggplot(table_sexe_long, aes(
+    x = statut,
+    y = proportion,
+    fill = Sexe
+)) +
+    geom_col(position = "stack", width = 0.7, color = "black") +
+    geom_hline(yintercept = 50, color = "red", linewidth = 0.60) +  # solid elegant green line
+    facet_grid(experience ~ inhibitor) +
+    scale_fill_manual(
+        values = couleurs,
+        guide = guide_legend(
+            override.aes = list(color = "black")  # Outline legend boxes
+        )
+    ) +
+    scale_y_continuous(
+        name = "Proportion (%)",
+        limits = c(0, 100),
+        breaks = seq(0, 100, 25),
+        labels = function(x) paste0(x, "%")
+    ) +
+    labs(x = NULL) +
+    theme_bw(base_size = 13) +
+    theme(
+        legend.position = "top",
+        legend.title = element_text(face = "bold", size = 11, color = "black"),
+        legend.text = element_text(size = 11, color = "black"),
+        strip.background = element_rect(fill = "gray95", color = "gray80", linewidth = 0.8),
+        strip.text = element_text(face = "plain", size = 12, color = "black"),
+        axis.text = element_text(size = 11, color = "black"),
+        axis.title = element_text(size = 12, color = "black"),
+        panel.grid.major = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        panel.spacing.x = unit(1.2, "lines"),
+        panel.spacing.y = unit(1, "lines"),
+        text = element_text(color = "black")
+    )
+
+# ---- 5️⃣ Display ----
+plot_sex_ratio
+
+```
+```{r}
+#Save with more height (inches) 
+#ggsave("plot_Sex_ratio_ok.png", plot = plot_sex_ratio, width = 8, height = 7, dpi = 300)
+```
+
+#  Test statistiques sur la proportion de femelles emergentes !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    femelles_ctrl <- sum(df$femelles[df$statut == "ctrl"])
+    total_ctrl     <- sum(df$adultes[df$statut == "ctrl"])
+    femelles_test <- sum(df$femelles[df$statut == "test"])
+    total_test     <- sum(df$adultes[df$statut == "test"])
+    
+    prop_ctrl <- (femelles_ctrl / total_ctrl) * 100
+    prop_test <- (femelles_test / total_test) * 100
+    
+     # calcul des IC à 95 % avec prop.test()
+        
+         ic_low_ctrl = purrr::map2_dbl(femelles_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(femelles_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(femelles_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(femelles_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        femelles_ctrl,
+        total_ctrl - femelles_ctrl,
+        femelles_test,
+        total_test - femelles_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(femelles_ctrl, femelles_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(prop_ctrl > prop_test, "Ctrl > Test", "Test > Ctrl"))
+    
+    tibble(
+        Prop = "Femelles",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_Emergence_femelles <- table_sexe %>%
+    group_by(inhibitor, experience) %>%
+    #group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+pval_Emergence_femelles
+```
+
+#  Global Test statistiques sur la proportion de femelles emergentes !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    femelles_ctrl <- sum(df$femelles[df$statut == "ctrl"])
+    total_ctrl     <- sum(df$adultes[df$statut == "ctrl"])
+    femelles_test <- sum(df$femelles[df$statut == "test"])
+    total_test     <- sum(df$adultes[df$statut == "test"])
+    
+    prop_ctrl <- (femelles_ctrl / total_ctrl) * 100
+    prop_test <- (femelles_test / total_test) * 100
+    
+     # calcul des IC à 95 % avec prop.test()
+        
+         ic_low_ctrl = purrr::map2_dbl(femelles_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(femelles_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(femelles_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(femelles_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        femelles_ctrl,
+        total_ctrl - femelles_ctrl,
+        femelles_test,
+        total_test - femelles_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(femelles_ctrl, femelles_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(prop_ctrl > prop_test, "Ctrl > Test", "Test > Ctrl"))
+    
+    tibble(
+        Prop = "Femelles",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+Global_pval_Emergence_femelles <- table_sexe %>%
+    #group_by(inhibitor, experience) %>%
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+Global_pval_Emergence_femelles
+```
+
+---------------------------------------------------------
+#Globale Summary_Inhibitors_Analyse (Fatoumata)
+
+
+#1. Lets get the means number of each stade of devoloppement, summarized by inhibitors and status
+ 
+```{r message=FALSE}
+Summary_oeufs <- data_for_analysis %>% 
+    dplyr::filter(nbre_oeufs > 0) %>% 
+    dplyr::group_by(inhibitor, statut) %>% 
+    summarise(
+       nbre_femelles = dplyr::n(),
+        moyenne = mean(nbre_oeufs, na.rm = TRUE),
+    ecart_type = sd(nbre_oeufs, na.rm = TRUE),  #variabilité entre individus
+    moyenne_sd = ecart_type / sqrt(dplyr::n()), #erreur_standard, #precision de la moyenne
+        stade = "oeufs"
+    )
+
+Summary_Larves <- data_for_analysis %>% 
+    dplyr::filter(nbre_larves > 0) %>% 
+    dplyr::group_by(inhibitor, statut) %>% 
+    summarise(
+       nbre_femelles = dplyr::n(),
+        moyenne = mean(nbre_larves, na.rm = TRUE),
+    ecart_type = sd (nbre_larves, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()), 
+        stade = "larves"
+    )
+
+Summary_Nymphes <- data_for_analysis %>% 
+    dplyr::filter(nbre_nymphes > 0) %>% 
+    dplyr::group_by(inhibitor, statut) %>% 
+    summarise(
+       nbre_femelles = dplyr::n(),
+        moyenne = mean(nbre_nymphes, na.rm = TRUE),
+     ecart_type = sd (nbre_nymphes, na.rm = TRUE), 
+     moyenne_sd = ecart_type / sqrt(dplyr::n()),
+        stade = "nymphes"
+    )
+
+Summary_Adultes <- data_for_analysis %>% 
+    dplyr::filter(nbre_adultes > 0) %>% 
+    dplyr::group_by(inhibitor, statut) %>% 
+    summarise(
+        nbre_femelles = dplyr::n(),
+        moyenne = mean(nbre_adultes, na.rm = TRUE),
+  ecart_type = sd (nbre_adultes, na.rm = TRUE), 
+  moyenne_sd = ecart_type / sqrt(dplyr::n()),
+        stade = "adultes"
+    )
+
+Summary_global_means_cycle <- rbind(
+    Summary_oeufs, Summary_Larves, Summary_Nymphes, Summary_Adultes
+)
+```
+
+
+#  Taux d'eclosion and Test statistiques sur les taux d'eclosion par exp !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    eclos_ctrl <- sum(df$nbre_larves[df$statut == "ctrl"], na.rm = TRUE)
+    total_ctrl  <- sum(df$nbre_oeufs[df$statut == "ctrl"], na.rm = TRUE)
+    eclos_test <- sum(df$nbre_larves[df$statut == "test"], na.rm = TRUE)
+    total_test  <- sum(df$nbre_oeufs[df$statut == "test"], na.rm = TRUE)
+    
+    prop_ctrl <- (eclos_ctrl / total_ctrl) * 100
+    prop_test <- (eclos_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(eclos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(eclos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(eclos_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(eclos_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        eclos_ctrl ,
+        total_ctrl - eclos_ctrl ,
+        eclos_test,
+        total_test - eclos_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(eclos_ctrl, eclos_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Inhib", "Inhib > Ctrl"))
+    
+    tibble(
+        Phase = "Taux_Eclos",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_Taux_eclosion <- data_for_analysis %>%
+    dplyr::filter(nbre_oeufs > 0) %>% 
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+pval_Taux_eclosion
+```
+
+#  Taux de nymphose and Test statistiques sur les taux de nymphose par exp !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    nymphos_ctrl <- sum(df$nbre_nymphes[df$statut == "ctrl"], na.rm = TRUE)
+    total_ctrl  <- sum(df$nbre_larves[df$statut == "ctrl"], na.rm = TRUE)
+    nymphos_test <- sum(df$nbre_nymphes[df$statut == "test"], na.rm = TRUE)
+    total_test  <- sum(df$nbre_larves[df$statut == "test"], na.rm = TRUE)
+    
+    prop_ctrl <- (nymphos_ctrl / total_ctrl) * 100
+    prop_test <- (nymphos_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(nymphos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(nymphos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(nymphos_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(nymphos_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        nymphos_ctrl ,
+        total_ctrl - nymphos_ctrl ,
+        nymphos_test,
+        total_test - nymphos_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(nymphos_ctrl, nymphos_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Inhib", "Inhib > Ctrl"))
+    
+    tibble(
+        Phase = "Taux_Nymph",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_Taux_Nymphose <- data_for_analysis %>%
+    dplyr::filter(nbre_larves > 0) %>% 
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+pval_Taux_Nymphose
+```
+
+#  Taux de Emergence and Test statistiques sur les taux de Emergence par exp !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    emerg_ctrl <- sum(df$nbre_adultes[df$statut == "ctrl"], na.rm = TRUE) #emergeant
+    total_ctrl  <- sum(df$nbre_nymphes[df$statut == "ctrl"], na.rm = TRUE) #total
+    emerg_test<- sum(df$nbre_adultes[df$statut == "test"], na.rm = TRUE)
+    total_test  <- sum(df$nbre_nymphes[df$statut == "test"], na.rm = TRUE)
+    
+    prop_ctrl <- (emerg_ctrl / total_ctrl) * 100
+    prop_test <- (emerg_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(emerg_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(emerg_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(emerg_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(emerg_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        emerg_ctrl ,
+        total_ctrl - emerg_ctrl ,
+        emerg_test,
+        total_test - emerg_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(emerg_ctrl, emerg_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Inhib", "Inhib > Ctrl"))
+    
+    tibble(
+        Phase = "Taux_Emerg",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_Taux_Emergence <- data_for_analysis %>%
+    dplyr::filter(nbre_nymphes > 0) %>% 
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+pval_Taux_Emergence
+```
+
+#  Taux d'eclosion and Test statistiques sur les taux d'eclosion global par inhibitor !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    eclos_ctrl <- sum(df$nbre_larves[df$statut == "ctrl"], na.rm = TRUE)
+    total_ctrl  <- sum(df$nbre_oeufs[df$statut == "ctrl"], na.rm = TRUE)
+    eclos_test <- sum(df$nbre_larves[df$statut == "test"], na.rm = TRUE)
+    total_test  <- sum(df$nbre_oeufs[df$statut == "test"], na.rm = TRUE)
+    
+    prop_ctrl <- (eclos_ctrl / total_ctrl) * 100
+    prop_test <- (eclos_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(eclos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(eclos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(eclos_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(eclos_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        eclos_ctrl ,
+        total_ctrl - eclos_ctrl ,
+        eclos_test,
+        total_test - eclos_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(eclos_ctrl, eclos_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Inhib", "Inhib > Ctrl"))
+    
+    tibble(
+        Phase = "Taux_Eclos",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_global_Taux_eclosion <- data_for_analysis %>%
+    dplyr::filter(nbre_oeufs > 0) %>% 
+    #group_by(inhibitor, experience) %>%
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+pval_global_Taux_eclosion
+```
+
+#  Taux de nymphose and Test statistiques sur les taux de nymphose par exp !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    nymphos_ctrl <- sum(df$nbre_nymphes[df$statut == "ctrl"], na.rm = TRUE)
+    total_ctrl  <- sum(df$nbre_larves[df$statut == "ctrl"], na.rm = TRUE)
+    nymphos_test <- sum(df$nbre_nymphes[df$statut == "test"], na.rm = TRUE)
+    total_test  <- sum(df$nbre_larves[df$statut == "test"], na.rm = TRUE)
+    
+    prop_ctrl <- (nymphos_ctrl / total_ctrl) * 100
+    prop_test <- (nymphos_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(nymphos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(nymphos_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(nymphos_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(nymphos_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        nymphos_ctrl ,
+        total_ctrl - nymphos_ctrl ,
+        nymphos_test,
+        total_test - nymphos_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(nymphos_ctrl, nymphos_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Inhib", "Inhib > Ctrl"))
+    
+    tibble(
+        Phase = "Taux_Nymph",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_global_Taux_Nymphose <- data_for_analysis %>%
+    dplyr::filter(nbre_larves > 0) %>% 
+    #group_by(inhibitor, experience) %>%
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+pval_global_Taux_Nymphose
+```
+
+#  Taux de Emergence and Test statistiques sur les taux de Emergence par exp !!!
+```{r}
+# 🔹 Fonction automatique de choix de test
+get_pvalue_label_prop_auto <- function(df){
+    emerg_ctrl <- sum(df$nbre_adultes[df$statut == "ctrl"], na.rm = TRUE) #emergeant
+    total_ctrl  <- sum(df$nbre_nymphes[df$statut == "ctrl"], na.rm = TRUE) #total
+    emerg_test<- sum(df$nbre_adultes[df$statut == "test"], na.rm = TRUE)
+    total_test  <- sum(df$nbre_nymphes[df$statut == "test"], na.rm = TRUE)
+    
+    prop_ctrl <- (emerg_ctrl / total_ctrl) * 100
+    prop_test <- (emerg_test / total_test) * 100
+    
+    # calcul des IC à 95 % avec prop.test() #Fatoumata !!!
+    ic_low_ctrl = purrr::map2_dbl(emerg_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_ctrl = purrr::map2_dbl(emerg_ctrl, total_ctrl, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    ic_low_test = purrr::map2_dbl(emerg_test, total_test, ~ prop.test(.x, .y)$conf.int[1] * 100)
+    ic_high_test = purrr::map2_dbl(emerg_test, total_test, ~ prop.test(.x, .y)$conf.int[2] * 100)
+    
+    tab <- matrix(c(
+        emerg_ctrl ,
+        total_ctrl - emerg_ctrl ,
+        emerg_test,
+        total_test - emerg_test
+    ), nrow = 2, byrow = TRUE)
+    
+    # Choix du test selon les conditions
+    if(min(tab) < 5){
+        p <- fisher.test(tab)$p.value
+        test_used <- "Fisher"
+    } else if(total_ctrl >= 20 & total_test >= 20){
+        p <- prop.test(x = c(emerg_ctrl, emerg_test),
+                       n = c(total_ctrl, total_test))$p.value
+        test_used <- "Prop test"
+    } else {
+        p <- chisq.test(tab, correct = FALSE)$p.value
+        test_used <- "Chi²"
+    }
+    
+    # Label de significativité
+    label <- ifelse(p >= 0.05, "ns",
+                    ifelse(p < 0.001, "***",
+                           ifelse(p < 0.01, "**", "*")))
+    
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                        ifelse(prop_ctrl > prop_test, "Ctrl > Inhib", "Inhib > Ctrl"))
+    
+    tibble(
+        Phase = "Taux_Emerg",
+        prop_ctrl = round(prop_ctrl, 3),
+        ic_low_ctrl = round(ic_low_ctrl, 3),
+        ic_high_ctrl = round(ic_high_ctrl, 3),
+        prop_test = round(prop_test, 3),
+        ic_low_test = round(ic_low_test, 3),
+        ic_high_test = round(ic_high_test, 3),
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used,
+    )
+}
+
+pval_global_Taux_Emergence <- data_for_analysis %>%
+    dplyr::filter(nbre_nymphes > 0) %>% 
+    #group_by(inhibitor, experience) %>%
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label_prop_auto(pick(everything())),
+        .groups = "drop"
+    )
+pval_global_Taux_Emergence
+```
+
+#2. Lets get the means duration between of each stade of devoloppement, summarized by experiences,inhibitors and status
+ 
+```{r message=FALSE}
+Sum_duree_G_Ponte <- data_for_analysis %>%
+  dplyr::filter(nbre_oeufs > 0) %>% 
+  #dplyr::group_by(inhibitor, statut) %>% 
+  dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean(duree_g_ponte, na.rm = TRUE),
+   ecart_type = sd(duree_g_ponte, na.rm = TRUE), #variabilité entre individus
+   moyenne_sd = ecart_type / sqrt(dplyr::n()), #erreur_standard, #precision de la moyenne
+   #moyenne_sd = sd(duree_g_ponte, na.rm = TRUE) / sqrt(sum(!is.na(duree_g_ponte))) #if ecart_type not needed
+    durée = "Gorgement_Ponte"
+  )
+
+Sum_duree_P_Eclosion <- data_for_analysis %>%
+  dplyr::filter(nbre_larves > 0) %>% 
+  #dplyr::group_by(inhibitor, statut) %>% 
+  dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_p_eclosion), na.rm = TRUE),
+    ecart_type = sd(duree_p_eclosion, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Ponte_Eclosion"
+  )
+
+data_for_analysis2 <- data_for_analysis %>%
+    mutate(
+        duree_eclo_nymphose = duree_p_nymphose - duree_p_eclosion
+    )
+
+Sum_duree_Eclo_Nymphose <- data_for_analysis2 %>% 
+  dplyr::filter(nbre_nymphes > 0) %>% 
+  #dplyr::group_by(inhibitor, statut) %>% 
+  dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_eclo_nymphose), na.rm = TRUE),
+    ecart_type = sd(duree_eclo_nymphose, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Eclosion_Nymphose"
+  )
+
+data_for_analysis <- data_for_analysis %>%
+        mutate(
+            duree_n_emergence = as.numeric(duree_n_emergence)
+        )
+
+Sum_duree_N_Emergence<- data_for_analysis %>% 
+  dplyr::filter(nbre_adultes > 0) %>% 
+  #dplyr::group_by(inhibitor, statut) %>% 
+  dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_n_emergence), na.rm = TRUE),
+    ecart_type = sd(duree_n_emergence, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Nymphose_Emergence"
+  )
+
+Sum_duree_P_Emergence<- data_for_analysis %>% 
+  dplyr::filter(nbre_adultes > 0) %>% 
+  dplyr::group_by(inhibitor, statut) %>% 
+  #dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_p_emergence), na.rm = TRUE),
+    ecart_type = sd(duree_p_emergence, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Ponte_Emergence"
+  )
+
+Summary_cycle_durations <- rbind(
+  Sum_duree_G_Ponte, Sum_duree_P_Eclosion, Sum_duree_Eclo_Nymphose, Sum_duree_N_Emergence, Sum_duree_P_Emergence
+)
+```
+
+#3. Lets do the statiscal test on the means difference delay between stade of devoloppement, summarized by experience, inhibitors and status (Ctrl Vs Test for each inhitor)
+# Duration Gorgement_Ponte 
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df)
+  {
+    ctrl_vals <- df$duree_g_ponte[df$statut == "ctrl"]
+    test_vals <- df$duree_g_ponte[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_g_ponte ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_g_ponte ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                     )
+    
+    tibble(durée = "Gorgement_Ponte",
+        p = round(p, 4),
+        label = label,
+       Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_duree_g_ponte <- data_for_analysis %>%
+    dplyr::filter(nbre_oeufs > 0) %>% 
+    #group_by(inhibitor) %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+# For Ponte_Eclosion
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df) {
+    
+    ctrl_vals <- df$duree_p_eclosion[df$statut == "ctrl"]
+    test_vals <- df$duree_p_eclosion[df$statut == "test"]
+    
+    # 🔒 Vérification : effectif minimum
+    #I was getting a warning message as duree_p_eclosion can be = 1 day)
+    if(length(ctrl_vals) < 2 | length(test_vals) < 2){ 
+        return(tibble(
+            durée = "Ponte_Eclosion",
+            p = NA,
+            label = "NA",
+            direction = "NA",
+            test_used = "Not enough data"
+        ))
+    }
+    
+    # 🔒 Fonction Shapiro sécurisée
+    safe_shapiro <- function(x){
+        if(length(unique(x)) < 3){
+            return(FALSE)
+        }
+        shapiro.test(x)$p.value > 0.05
+    }
+    
+    normal_ctrl  <- safe_shapiro(ctrl_vals)
+    normal_test  <- safe_shapiro(test_vals)
+    
+    # 🔧 Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_p_eclosion ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_p_eclosion ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # ⭐ Label de p-value
+    label <- dplyr::case_when(
+        p >= 0.05 ~ "ns",
+        p < 0.001 ~ "***",
+        p < 0.01 ~ "**",
+        TRUE ~ "*"
+    )
+    
+    tibble(
+        durée = "Ponte_Eclosion",
+        p = round(p, 4),
+        label = label,
+        Signif = "NA",
+        test_used = test_used
+    )
+}
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_duree_p_eclosion <- data_for_analysis %>%
+    dplyr::filter(nbre_larves > 0) %>% 
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+# For Eclosion_Nymphose 
+```{r}
+data_for_analysis2 <- data_for_analysis %>%
+    mutate(
+        duree_eclo_nymphose = duree_p_nymphose - duree_p_eclosion
+    )
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_eclo_nymphose[df$statut == "ctrl"]
+    test_vals <- df$duree_eclo_nymphose[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_eclo_nymphose ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_eclo_nymphose ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                     )
+    
+    tibble(durée = "Eclosion_Nymphose",
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_duree_eclo_nymphose <- data_for_analysis2 %>%
+    dplyr::filter(nbre_nymphes > 0) %>% 
+    #group_by(inhibitor) %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+# For Nymphose_Emergence 
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_n_emergence[df$statut == "ctrl"]
+    test_vals <- df$duree_n_emergence[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_n_emergence ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_n_emergence ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                     )
+    
+    
+    tibble(durée = "Nymphose_Emergence",
+        p = round(p, 4),
+        label = label,
+       Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_duree_n_emergence <- data_for_analysis %>%
+    dplyr::filter(nbre_adultes > 0) %>% 
+    #group_by(inhibitor) %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+
+# For Ponte_Emergence 
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_p_emergence[df$statut == "ctrl"]
+    test_vals <- df$duree_p_emergence[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_p_emergence ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_p_emergence ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+      
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                     )
+    
+    tibble(durée = "Ponte_Emergence",
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_duree_p_emergence <- data_for_analysis %>%
+    dplyr::filter(nbre_adultes > 0) %>% 
+    #group_by(inhibitor) %>%
+    group_by(inhibitor, experience) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+```{r}
+Summary_pval_durations_cycle <- rbind(
+  pval_duree_g_ponte,
+  pval_duree_p_eclosion,
+  pval_duree_eclo_nymphose,
+  pval_duree_n_emergence,
+  pval_duree_p_emergence
+)
 ```
 
 
 
+#4. Lets get the means duration between of each stade of devoloppement, summarized by inhibitors and status
+ 
+```{r message=FALSE}
+Sum_duree_G_Ponte <- data_for_analysis %>%
+  dplyr::filter(nbre_oeufs > 0) %>% 
+  dplyr::group_by(inhibitor, statut) %>% 
+  #dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean(duree_g_ponte, na.rm = TRUE),
+   ecart_type = sd(duree_g_ponte, na.rm = TRUE), #variabilité entre individus
+   moyenne_sd = ecart_type / sqrt(dplyr::n()), #erreur_standard, #precision de la moyenne
+   #moyenne_sd = sd(duree_g_ponte, na.rm = TRUE) / sqrt(sum(!is.na(duree_g_ponte))) #if ecart_type not needed
+    durée = "Gorgement_Ponte"
+  )
+
+Sum_duree_P_Eclosion <- data_for_analysis %>%
+  dplyr::filter(nbre_larves > 0) %>% 
+  dplyr::group_by(inhibitor, statut) %>% 
+  #dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_p_eclosion), na.rm = TRUE),
+    ecart_type = sd(duree_p_eclosion, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Ponte_Eclosion"
+  )
+
+data_for_analysis2 <- data_for_analysis %>%
+    mutate(
+        duree_eclo_nymphose = duree_p_nymphose - duree_p_eclosion
+    )
+
+Sum_duree_Eclo_Nymphose <- data_for_analysis2 %>% 
+  dplyr::filter(nbre_nymphes > 0) %>% 
+  dplyr::group_by(inhibitor, statut) %>% 
+  #dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_eclo_nymphose), na.rm = TRUE),
+    ecart_type = sd(duree_eclo_nymphose, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Eclosion_Nymphose"
+  )
+
+data_for_analysis <- data_for_analysis %>%
+        mutate(
+            duree_n_emergence = as.numeric(duree_n_emergence)
+        )
+
+Sum_duree_N_Emergence<- data_for_analysis %>% 
+  dplyr::filter(nbre_adultes > 0) %>% 
+  dplyr::group_by(inhibitor, statut) %>% 
+  #dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_n_emergence), na.rm = TRUE),
+    ecart_type = sd(duree_n_emergence, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Nymphose_Emergence"
+  )
+
+Sum_duree_P_Emergence<- data_for_analysis %>% 
+  dplyr::filter(nbre_adultes > 0) %>% 
+  dplyr::group_by(inhibitor, statut) %>% 
+  #dplyr::group_by(inhibitor, experience, statut) %>% 
+  summarise(
+    moyenne = mean((duree_p_emergence), na.rm = TRUE),
+    ecart_type = sd(duree_p_emergence, na.rm = TRUE), 
+    moyenne_sd = ecart_type / sqrt(dplyr::n()),
+    durée = "Ponte_Emergence"
+  )
+
+Summary_global_cycle_durations <- rbind(
+  Sum_duree_G_Ponte, Sum_duree_P_Eclosion, Sum_duree_Eclo_Nymphose, Sum_duree_N_Emergence, Sum_duree_P_Emergence
+)
+```
+
+#5. Lets do the statiscal test on the means difference delay between stade of devoloppement, summarized by inhibitors and status (Ctrl Vs Test for each inhitor)
+# Duration Gorgement_Ponte 
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_g_ponte[df$statut == "ctrl"]
+    test_vals <- df$duree_g_ponte[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_g_ponte ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_g_ponte ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                    )
+    
+    tibble(durée = "Gorgement_Ponte",
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_global_duree_g_ponte <- data_for_analysis %>%
+    dplyr::filter(nbre_oeufs > 0) %>% 
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+# For Ponte_Eclosion
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_p_eclosion[df$statut == "ctrl"]
+    test_vals <- df$duree_p_eclosion[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_p_eclosion ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_p_eclosion ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                    )
+    
+    tibble(durée = "Ponte_Eclosion",
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_global_duree_p_eclosion <- data_for_analysis %>%
+    dplyr::filter(nbre_larves > 0) %>% 
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+# For Eclosion_Nymphose 
+```{r}
+data_for_analysis2 <- data_for_analysis %>%
+    mutate(
+        duree_eclo_nymphose = duree_p_nymphose - duree_p_eclosion
+    )
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_eclo_nymphose[df$statut == "ctrl"]
+    test_vals <- df$duree_eclo_nymphose[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_eclo_nymphose ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_eclo_nymphose ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                    )
+    
+    tibble(durée = "Eclosion_Nymphose",
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_global_duree_eclo_nymphose <- data_for_analysis2 %>%
+    dplyr::filter(nbre_nymphes > 0) %>% 
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+# For Nymphose_Emergence 
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_n_emergence[df$statut == "ctrl"]
+    test_vals <- df$duree_n_emergence[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_n_emergence ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_n_emergence ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                    )
+    
+    
+    tibble(durée = "Nymphose_Emergence",
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_global_duree_n_emergence <- data_for_analysis %>%
+    dplyr::filter(nbre_adultes > 0) %>% 
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+
+# For Ponte_Emergence 
+```{r}
+# --- Fonction pour calculer p-value, test et label ---
+get_pvalue_label <- function(df){
+    ctrl_vals <- df$duree_p_emergence[df$statut == "ctrl"]
+    test_vals <- df$duree_p_emergence[df$statut == "test"]
+    
+      # Vérification normalité
+    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
+    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    
+    # Test statistique approprié
+    if(normal_ctrl & normal_test){
+        p <- t.test(duree_p_emergence ~ statut, data = df)$p.value
+        test_used <- "t.test"
+    } else {
+        p <- wilcox.test(duree_p_emergence ~ statut, data = df, exact = FALSE)$p.value
+        test_used <- "wilcox.test"
+    }
+    
+    # Déterminer le label de signification
+    if(p >= 0.05){
+        label <- "ns"
+    } else if(p < 0.001){
+        label <- "***"
+    } else if(p < 0.01){
+        label <- "**"
+    } else {
+        label <- "*"
+    }
+    
+     # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                    )
+    
+    tibble(durée = "Ponte_Emergence",
+        p = round(p, 4),
+        label = label,
+        Signif = Signif,
+        test_used = test_used
+    )
+}
+
+# --- Calcul des p-values pour chaque inhibiteur ---
+pval_global_duree_p_emergence <- data_for_analysis %>%
+    dplyr::filter(nbre_adultes > 0) %>% 
+    group_by(inhibitor) %>%
+    summarise(
+        get_pvalue_label(cur_data()),
+        .groups = "drop"
+    )
+```
+```{r}
+Summary_pval_global_durations_cycle <- rbind(
+  pval_global_duree_g_ponte,
+  pval_global_duree_p_eclosion,
+  pval_global_duree_eclo_nymphose,
+  pval_global_duree_n_emergence,
+  pval_global_duree_p_emergence
+)
+```
