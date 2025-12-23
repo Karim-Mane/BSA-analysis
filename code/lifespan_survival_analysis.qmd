@@ -1,0 +1,345 @@
+---
+title: "Lifespan_survival_analysis"
+author: "Fatoumata Seck, Karim-Mane"
+format: docx
+---
+
+# set the path to the dataset
+```{r}
+library(readxl)
+base_longevity <- read_excel("~/Documents/Karim/BSA-analysis/data/base_longevity_fs_km.xlsx", 
+    col_types = c("numeric", "text", "date", 
+        "text", "numeric", "numeric"))
+```
+
+# longevité des femelles
+```{r}
+# --- Packages ---
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(purrr)
+library(survival)
+library(survminer)
+library(RColorBrewer)
+
+# --- Fonction pour préparer la base de survie ---
+prep_survie <- function(df, sexe_filtre){
+    df_filtre <- df %>%
+        filter(sexe == sexe_filtre) %>%
+        arrange(statut, mortality_date)
+    
+    # Créer les lignes pour décès
+    df_indiv <- df_filtre %>%
+        filter(deaths > 0) %>%
+        uncount(deaths, .id = "id_moustique") %>%
+        mutate(event = 1) %>%
+        select(statut, time, event)
+    
+    # Calculer les censures
+    total_initial <- df_filtre %>%
+        group_by(statut) %>%
+        summarise(total = sum(deaths), .groups = "drop")
+    
+    morts_par_statut <- df_indiv %>%
+        count(statut, name = "morts")
+    
+    max_time <- max(df_filtre$time)
+    
+    df_censure <- total_initial %>%
+        left_join(morts_par_statut, by = "statut") %>%
+        mutate(morts = ifelse(is.na(morts), 0, morts),
+               vivants = total - morts) %>%
+        filter(vivants > 0) %>%
+        uncount(vivants, .id = "id_moustique") %>%
+        mutate(time = max_time, event = 0) %>%
+        select(statut, time, event)
+    
+    bind_rows(df_indiv, df_censure) %>%
+        mutate(sexe = sexe_filtre,
+               statut = factor(statut))
+}
+
+# --- 1️⃣ Préparer la base pour les mâles ---
+df_survie_femelles <- prep_survie(base_longevity, "f") #Sexe = f or M !!!
+
+# --- 2️⃣ Renommer les niveaux pour la légende ---
+labels_renames <- c(
+    "ctrl"    = "Contrôle",
+    "inhib1"  = "Inhibiteur 1",
+    "inhib10" = "Inhibiteur 2",
+    "inhib3"  = "Inhibiteur 3",
+    "inhib4"  = "Inhibiteur 4"
+)
+
+df_survie_femelles$statut <- factor(df_survie_femelles$statut,
+                                 levels = names(labels_renames),
+                                 labels = labels_renames)
+
+# --- 3️⃣ Modèle Kaplan-Meier ---
+fit_femelles <- survfit(Surv(time, event) ~ statut, data = df_survie_femelles)
+
+# --- 4️⃣ Plot Kaplan-Meier avec palette Dark2 ---
+plot_survie_f <- ggsurvplot(
+    fit_femelles,
+    data = df_survie_femelles,
+    pval = TRUE,
+    conf.int = TRUE,
+    risk.table = TRUE,
+    risk.table.height = 0.25,
+    palette = "Dark2",
+    #title = "Courbes de survie des femelles selon le traitement",
+    xlab = "Temps (jours)",
+    ylab = "Probabilité de survie",
+    legend.title = "Statut",
+    risk.table.title = "Individus en vie",  # ou "" pour le supprimer
+    legend.labs = levels(df_survie_femelles$statut)
+)
+
+# 🔧 Personnalisation du style (taille, couleur de texte, etc.)
+plot_survie_f$plot <- plot_survie_f$plot +
+  theme(
+    legend.text = element_text(size = 14, color = "black"),  # taille + couleur de la légende
+    legend.title = element_text(size = 14, color = "black", face = "bold"), # au cas où un titre serait ajouté plus tard
+    plot.title = element_text(size = 16, face = "bold", color = "black", hjust = 0.5), # titre du plot
+    axis.title = element_text(size = 14, color = "black"),
+    axis.text = element_text(size = 12, color = "black")
+  )
+
+# --- Afficher le plot final ---
+plot_survie_f
+```
+
+#add the median survie line in red
+```{r}
+plot_survie_f$plot <- plot_survie_f$plot +
+    geom_hline(
+        yintercept = 0.5,
+        linetype = "dashed",
+        color = "red",
+        linewidth = 1
+    )
+plot_survie_f
+```
+# Save the plots
+
+#```{r}
+#Combined plot
+library(cowplot)  # or library(gridExtra)
+library(ggpubr)
+
+# 1️⃣ Extract the KM plot and risk table
+km_plot    <- plot_survie_f$plot
+risk_table <- plot_survie_f$table
+
+# 2️⃣ Combine them vertically
+combined_plot <- plot_grid(
+  km_plot,
+  risk_table,
+  ncol = 1,
+  align = "v",
+  rel_heights = c(3, 1)  # 3/4 height for KM plot, 1/4 for risk table
+)
+
+# 3️⃣ Save the combined plot as PNG
+ggsave(
+  "plot_survie_femelles_combined.png",
+  plot = combined_plot,
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+```
+
+#```{r}
+#Plot principale only
+plot_survie_femelles    <- plot_survie_f$plot
+
+ggsave(
+    "plot_survie_femelles.pdf",
+    plot = plot_survie_femelles,
+    width = 8,
+    height = 6,
+    dpi = 300
+)
+```
+
+# --- Modèle de Cox ---
+```{r}
+cox_females <- coxph(Surv(time, event) ~ statut, data = df_survie_femelles)
+
+# --- Résumé du modèle ---
+summary(cox_females)
+```
+#Verifivation de l'Hypothese de proportion des risques 
+```{r}
+cox.zph(cox_females) # p > 0.05 ! So its Good 👍 
+```
+- - - - - - - --
+
+# longevité des Mâles
+```{r}
+# --- Packages ---
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(purrr)
+library(survival)
+library(survminer)
+library(RColorBrewer)
+
+# --- Fonction pour préparer la base de survie ---
+prep_survie <- function(df, sexe_filtre){
+    df_filtre <- df %>%
+        filter(sexe == sexe_filtre) %>%
+        arrange(statut, mortality_date)
+    
+    # Créer les lignes pour décès
+    df_indiv <- df_filtre %>%
+        filter(deaths > 0) %>%
+        uncount(deaths, .id = "id_moustique") %>%
+        mutate(event = 1) %>%
+        select(statut, time, event)
+    
+    # Calculer les censures
+    total_initial <- df_filtre %>%
+        group_by(statut) %>%
+        summarise(total = sum(deaths), .groups = "drop")
+    
+    morts_par_statut <- df_indiv %>%
+        count(statut, name = "morts")
+    
+    max_time <- max(df_filtre$time)
+    
+    df_censure <- total_initial %>%
+        left_join(morts_par_statut, by = "statut") %>%
+        mutate(morts = ifelse(is.na(morts), 0, morts),
+               vivants = total - morts) %>%
+        filter(vivants > 0) %>%
+        uncount(vivants, .id = "id_moustique") %>%
+        mutate(time = max_time, event = 0) %>%
+        select(statut, time, event)
+    
+    bind_rows(df_indiv, df_censure) %>%
+        mutate(sexe = sexe_filtre,
+               statut = factor(statut))
+}
+
+# --- 1️⃣ Préparer la base pour les mâles ---
+df_survie_males <- prep_survie(base_longevity, "m")
+
+# --- 2️⃣ Renommer les niveaux pour la légende ---
+labels_renames <- c(
+    "ctrl"    = "Contrôle",
+    "inhib1"  = "Inhibiteur 1",
+    "inhib10" = "Inhibiteur 2",
+    "inhib3"  = "Inhibiteur 3",
+    "inhib4"  = "Inhibiteur 4"
+)
+
+df_survie_males$statut <- factor(df_survie_males$statut,
+                                 levels = names(labels_renames),
+                                 labels = labels_renames)
+
+# --- 3️⃣ Modèle Kaplan-Meier ---
+fit_males <- survfit(Surv(time, event) ~ statut, data = df_survie_males)
+
+# --- 4️⃣ Plot Kaplan-Meier avec palette Dark2 ---
+plot_survie_m <- ggsurvplot(
+    fit_males,
+    data = df_survie_males,
+    pval = TRUE,
+    conf.int = TRUE,
+    risk.table = TRUE,
+    risk.table.height = 0.25,
+    palette = "Dark2",
+    #title = "Courbes de survie des mâles selon le traitement",
+    xlab = "Temps (jours)",
+    ylab = "Probabilité de survie",
+    legend.title = "Statut",
+    risk.table.title = "Individus en vie",  # ou "" pour le supprimer
+    legend.labs = levels(df_survie_males$statut)
+)
+
+# 🔧 Personnalisation du style (taille, couleur de texte, etc.)
+plot_survie_m$plot <- plot_survie_m$plot +
+  theme(
+    legend.text = element_text(size = 14, color = "black"),  # taille + couleur de la légende
+    legend.title = element_text(size = 14, color = "black", face = "bold"), # au cas où un titre serait ajouté plus tard
+    plot.title = element_text(size = 16, face = "bold", color = "black", hjust = 0.5), # titre du plot
+    axis.title = element_text(size = 14, color = "black"),
+    axis.text = element_text(size = 12, color = "black")
+  )
+
+# --- Afficher le plot final ---
+plot_survie_m
+```
+
+#add the median survie line in red
+```{r}
+plot_survie_m$plot <- plot_survie_m$plot +
+    geom_hline(
+        yintercept = 0.5,
+        linetype = "dashed",
+        color = "red",
+        linewidth = 1
+    )
+plot_survie_m
+```
+
+# Save the plots
+
+#```{r}
+#Combined plot
+library(cowplot)  # or library(gridExtra)
+library(ggpubr)
+
+# 1️⃣ Extract the KM plot and risk table
+km_plot2    <- plot_survie_m$plot
+risk_table2 <- plot_survie_m$table
+
+# 2️⃣ Combine them vertically
+combined_plot2 <- plot_grid(
+  km_plot2,
+  risk_table2,
+  ncol = 1,
+  align = "v",
+  rel_heights = c(3, 1)  # 3/4 height for KM plot, 1/4 for risk table
+)
+
+# 3️⃣ Save the combined plot as PNG
+ggsave(
+  "plot_survie_males_combined.png",
+  plot = combined_plot2,
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+```
+
+#```{r}
+#Plot principale only
+plot_survie_males    <- plot_survie_m$plot
+
+ggsave(
+    "plot_survie_males.pdf",
+    plot = plot_survie_males,
+    width = 8,
+    height = 6,
+    dpi = 300
+)
+```
+
+# --- Modèle de Cox ---
+```{r}
+cox_males <- coxph(Surv(time, event) ~ statut, data = df_survie_males)
+
+# --- Résumé du modèle ---
+summary(cox_males)
+```
+#Verifivation de l'Hypothese de proportion des risques 
+```{r}
+cox.zph(cox_males) # p > 0.05 ! So its Good 👍 
+```
