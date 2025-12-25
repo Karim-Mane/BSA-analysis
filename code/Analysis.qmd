@@ -2041,7 +2041,7 @@ plot_duration_dev_cycle <- ggplot(resume_cycle_durations, aes(x = phase, y = moy
   theme(
     text = element_text(size = 13),
     axis.text.x = element_text(size = 13, angle = 35, hjust = 1, color = "black"),
-    axis.text.y = element_text(size = 14, color = "black", margin = margin(t = 12)), #margin (t) is to add space on top of the y axis elements
+    axis.text.y = element_text(size = 13, color = "black", margin = margin(t = 12)), #margin (t) is to add space on top of the y axis elements
     axis.title.x = element_text(size = 13, face = "bold", margin = margin(t = 7)), #margin (t) is to add space on top of the title, betwen the x title and the x axis
     axis.title.y = element_text(size = 13, face = "bold", margin = margin(r = 7)), #margin (t) is to add space at right of the title, betwen the x title and the x axis,
     legend.position = "top",
@@ -2054,7 +2054,7 @@ plot_duration_dev_cycle
 ```
 ```{r}
 #Save with more height (inches) 
-#ggsave("plot_duration_dev_cycle_ok.png", plot = plot_duration_dev_cycle, width = 8, height = 7, dpi = 300)
+#ggsave("plot_duration_dev_cycle_ok.pdf", plot = plot_duration_dev_cycle, width = 8, height = 7, dpi = 300)
 ```
 ```{r}
 ggplot(resume_cycle, aes(x = stade, y = moyenne, group = statut)) +
@@ -2893,18 +2893,14 @@ get_pvalue_label <- function(df)
     ctrl_vals <- df$duree_g_ponte[df$statut == "ctrl"]
     test_vals <- df$duree_g_ponte[df$statut == "test"]
     
-      # Vérification normalité
-    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
-    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+     mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+     mean_test <- mean(test_vals, na.rm = TRUE)
     
-    # Test statistique approprié
-    if(normal_ctrl & normal_test){
-        p <- t.test(duree_g_ponte ~ statut, data = df)$p.value
-        test_used <- "t.test"
-    } else {
+    ### Because of Shapiro error message (duree can be = 1 so < 2), knowing we the appropried test is the Wilcoxon, #we do not need to loop !!!
+    
+#--- Test de Wilcoxon directement ---
         p <- wilcox.test(duree_g_ponte ~ statut, data = df, exact = FALSE)$p.value
         test_used <- "wilcox.test"
-    }
     
     # Déterminer le label de signification
     if(p >= 0.05){
@@ -2923,6 +2919,8 @@ get_pvalue_label <- function(df)
                      )
     
     tibble(durée = "Gorgement_Ponte",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
        Signif = Signif,
@@ -2948,51 +2946,39 @@ get_pvalue_label <- function(df) {
     ctrl_vals <- df$duree_p_eclosion[df$statut == "ctrl"]
     test_vals <- df$duree_p_eclosion[df$statut == "test"]
     
-    # 🔒 Vérification : effectif minimum
-    #I was getting a warning message as duree_p_eclosion can be = 1 day)
-    if(length(ctrl_vals) < 2 | length(test_vals) < 2){ 
-        return(tibble(
-            durée = "Ponte_Eclosion",
-            p = NA,
-            label = "NA",
-            direction = "NA",
-            test_used = "Not enough data"
-        ))
-    }
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
-    # 🔒 Fonction Shapiro sécurisée
-    safe_shapiro <- function(x){
-        if(length(unique(x)) < 3){
-            return(FALSE)
-        }
-        shapiro.test(x)$p.value > 0.05
-    }
-    
-    normal_ctrl  <- safe_shapiro(ctrl_vals)
-    normal_test  <- safe_shapiro(test_vals)
-    
-    # 🔧 Test statistique approprié
-    if(normal_ctrl & normal_test){
-        p <- t.test(duree_p_eclosion ~ statut, data = df)$p.value
-        test_used <- "t.test"
-    } else {
+    ### Because of Shapiro error message (duree can be = 1 so < 2), knowing we the appropried test is the Wilcoxon, 
+    #we do not need to loop !!!
+  #--- Test de Wilcoxon directement ---
         p <- wilcox.test(duree_p_eclosion ~ statut, data = df, exact = FALSE)$p.value
         test_used <- "wilcox.test"
-    }
+        
+  # --- Significance label ---
+  label <- if (is.na(p)) {
+    NA
+  } else if (p >= 0.05) {
+    "ns"
+  } else if (p < 0.001) {
+    "***"
+  } else if (p < 0.01) {
+    "**"
+  } else {
+    "*"
+  }
     
-    # ⭐ Label de p-value
-    label <- dplyr::case_when(
-        p >= 0.05 ~ "ns",
-        p < 0.001 ~ "***",
-        p < 0.01 ~ "**",
-        TRUE ~ "*"
-    )
+    # Direction de l'effet
+    Signif <- ifelse(p >= 0.05, "ns",
+                     ifelse(mean(ctrl_vals) > mean(test_vals), "Ctrl > Inhib", "Inhib > Ctrl")
+                     )
     
-    tibble(
-        durée = "Ponte_Eclosion",
+    tibble(durée = "Ponte_Eclosion",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
-        Signif = "NA",
+       Signif = Signif,
         test_used = test_used
     )
 }
@@ -3016,18 +3002,14 @@ get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_eclo_nymphose[df$statut == "ctrl"]
     test_vals <- df$duree_eclo_nymphose[df$statut == "test"]
     
-      # Vérification normalité
-    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
-    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
-    # Test statistique approprié
-    if(normal_ctrl & normal_test){
-        p <- t.test(duree_eclo_nymphose ~ statut, data = df)$p.value
-        test_used <- "t.test"
-    } else {
-        p <- wilcox.test(duree_eclo_nymphose ~ statut, data = df, exact = FALSE)$p.value
+    ### Because of Shapiro error message (duree can be = 1 so < 2), knowing we the appropried test is the Wilcoxon, 
+#we do not need to loop !!!
+#--- Test de Wilcoxon directement ---  
+    p <- wilcox.test(duree_eclo_nymphose ~ statut, data = df, exact = FALSE)$p.value
         test_used <- "wilcox.test"
-    }
     
     # Déterminer le label de signification
     if(p >= 0.05){
@@ -3047,6 +3029,8 @@ get_pvalue_label <- function(df){
                      )
     
     tibble(durée = "Eclosion_Nymphose",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
         Signif = Signif,
@@ -3071,18 +3055,14 @@ get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_n_emergence[df$statut == "ctrl"]
     test_vals <- df$duree_n_emergence[df$statut == "test"]
     
-      # Vérification normalité
-    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
-    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
-    # Test statistique approprié
-    if(normal_ctrl & normal_test){
-        p <- t.test(duree_n_emergence ~ statut, data = df)$p.value
-        test_used <- "t.test"
-    } else {
+  ### Because of Shapiro error message, knowing we the appropried test is the Wilcoxon, 
+    #we do not the loop !!!
+  #--- Test de Wilcoxon directement ---
         p <- wilcox.test(duree_n_emergence ~ statut, data = df, exact = FALSE)$p.value
         test_used <- "wilcox.test"
-    }
     
     # Déterminer le label de signification
     if(p >= 0.05){
@@ -3103,6 +3083,8 @@ get_pvalue_label <- function(df){
     
     
     tibble(durée = "Nymphose_Emergence",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
        Signif = Signif,
@@ -3128,18 +3110,14 @@ get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_p_emergence[df$statut == "ctrl"]
     test_vals <- df$duree_p_emergence[df$statut == "test"]
     
-      # Vérification normalité
-    normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
-    normal_test <- shapiro.test(test_vals)$p.value > 0.05
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
-    # Test statistique approprié
-    if(normal_ctrl & normal_test){
-        p <- t.test(duree_p_emergence ~ statut, data = df)$p.value
-        test_used <- "t.test"
-    } else {
+      ### Because of Shapiro error message (duree can be = 1 so < 2), knowing we the appropried test is the Wilcoxon, 
+#we do not need to loop !!!
+#--- Test de Wilcoxon directement ---
         p <- wilcox.test(duree_p_emergence ~ statut, data = df, exact = FALSE)$p.value
         test_used <- "wilcox.test"
-    }
     
     # Déterminer le label de signification
     if(p >= 0.05){
@@ -3159,6 +3137,8 @@ get_pvalue_label <- function(df){
                      )
     
     tibble(durée = "Ponte_Emergence",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
         Signif = Signif,
@@ -3270,6 +3250,9 @@ get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_g_ponte[df$statut == "ctrl"]
     test_vals <- df$duree_g_ponte[df$statut == "test"]
     
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
+    
       # Vérification normalité
     normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
     normal_test <- shapiro.test(test_vals)$p.value > 0.05
@@ -3300,6 +3283,8 @@ get_pvalue_label <- function(df){
                     )
     
     tibble(durée = "Gorgement_Ponte",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
         Signif = Signif,
@@ -3322,6 +3307,9 @@ pval_global_duree_g_ponte <- data_for_analysis %>%
 get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_p_eclosion[df$statut == "ctrl"]
     test_vals <- df$duree_p_eclosion[df$statut == "test"]
+    
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
       # Vérification normalité
     normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
@@ -3353,6 +3341,8 @@ get_pvalue_label <- function(df){
                     )
     
     tibble(durée = "Ponte_Eclosion",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
         Signif = Signif,
@@ -3379,6 +3369,9 @@ data_for_analysis2 <- data_for_analysis %>%
 get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_eclo_nymphose[df$statut == "ctrl"]
     test_vals <- df$duree_eclo_nymphose[df$statut == "test"]
+    
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
       # Vérification normalité
     normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
@@ -3410,6 +3403,8 @@ get_pvalue_label <- function(df){
                     )
     
     tibble(durée = "Eclosion_Nymphose",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
         Signif = Signif,
@@ -3432,6 +3427,9 @@ pval_global_duree_eclo_nymphose <- data_for_analysis2 %>%
 get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_n_emergence[df$statut == "ctrl"]
     test_vals <- df$duree_n_emergence[df$statut == "test"]
+    
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
       # Vérification normalité
     normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
@@ -3464,6 +3462,8 @@ get_pvalue_label <- function(df){
     
     
     tibble(durée = "Nymphose_Emergence",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
         Signif = Signif,
@@ -3487,6 +3487,9 @@ pval_global_duree_n_emergence <- data_for_analysis %>%
 get_pvalue_label <- function(df){
     ctrl_vals <- df$duree_p_emergence[df$statut == "ctrl"]
     test_vals <- df$duree_p_emergence[df$statut == "test"]
+    
+    mean_ctrl <- mean(ctrl_vals, na.rm = TRUE)
+    mean_test <- mean(test_vals, na.rm = TRUE)
     
       # Vérification normalité
     normal_ctrl <- shapiro.test(ctrl_vals)$p.value > 0.05
@@ -3518,6 +3521,8 @@ get_pvalue_label <- function(df){
                     )
     
     tibble(durée = "Ponte_Emergence",
+        mean_ctrl = round(mean_ctrl, 2),
+        mean_test = round(mean_test, 2),
         p = round(p, 4),
         label = label,
         Signif = Signif,
